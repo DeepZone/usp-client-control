@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.6-beta] – 2026-08-02
+
+### Geändert
+
+- Geschwindigkeitswerte werden einheitenabhängig automatisch als bit/s, kbit/s, Mbit/s oder Gbit/s skaliert
+- einheitliche SI-Skalierung für DSL, Fiber, Mobilfunk, Ethernet sowie WLAN- und LAN-Clientkapazitäten
+- Rate-Parameter in den technischen Tabellen erhalten ebenfalls eine lesbare Einheit
+
 ## [0.9.5-beta] – 2026-08-02
 
 ### Behoben
