@@ -7,6 +7,16 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.3-beta] – 2026-08-02
+
+### Geändert
+
+- „Letzte Nachricht“ aus dem Gerätekopf entfernt
+- symmetrischer Gerätekopf mit Uptime, WAN-IP und Netz beziehungsweise echtem Providerwert
+- CPU und Speicherauslastung rechts in einer gemeinsamen Ressourcenbox untereinander angeordnet
+- CPU- und Speicherwerte verwenden identische, live aktualisierte Auslastungsbalken
+- Providerwerte werden ausschließlich aus gemeldeten USP-Daten übernommen; andernfalls erscheint transparent das Zugangsmedium
+
 ## [0.9.2-beta] – 2026-08-02
 
 ### Geändert
