@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.7-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- Fiber-Geräte fragen zusätzlich und ausschließlich bei erkanntem Glasfaserzugang den USP-Bereich `Device.XPON.` ab
+- neue aufbereitete Anschlussbox „PON & Gegenstelle“ für OLT-Kennung und -Version, PON-ID, PON-Modus, ONU-Aktivierung, FEC, GEM-Ports und OMCI-Zuordnung
+- nicht gemeldete XPON-Werte werden vollständig ausgeblendet und nicht erneut als Rohdaten dargestellt
+
 ## [0.9.6-beta] – 2026-08-02
 
 ### Geändert

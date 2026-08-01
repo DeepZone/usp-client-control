@@ -175,6 +175,18 @@ def live_paths():
         return list(DEFAULT_LIVE_PATHS)
 
 
+def live_paths_for_agent(endpoint):
+    paths = live_paths()
+    with db() as connection:
+        fiber = connection.execute(
+            "SELECT 1 FROM parameters WHERE endpoint_id=? AND path LIKE 'Device.Optical.%' AND value<>'' LIMIT 1",
+            (endpoint,),
+        ).fetchone()
+    if fiber and "Device.XPON." not in paths:
+        paths.append("Device.XPON.")
+    return paths
+
+
 def emit_live(event_type, endpoint=None, payload=None):
     if not main_loop or not main_loop.is_running():
         return
@@ -903,7 +915,7 @@ def agent_schema(endpoint: str, request: Request):
 
 @app.post("/api/agents/{endpoint}/refresh-live")
 def refresh_live(endpoint: str, request: Request):
-    return create_job(endpoint, JobRequest(action="get", payload={"paths": live_paths(), "max_depth": 0}), request)
+    return create_job(endpoint, JobRequest(action="get", payload={"paths": live_paths_for_agent(endpoint), "max_depth": 0}), request)
 
 
 @app.post("/api/agents/{endpoint}/subscribe-live")
