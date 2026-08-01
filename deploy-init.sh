@@ -19,7 +19,7 @@ if [ ! -f mosquitto/certs/server.key ]; then
   common_name="$(sed -n 's/^MQTT_TLS_COMMON_NAME=//p' .env | head -n 1)"
   common_name="${common_name:-localhost}"
   openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 365 \
-    -subj "/CN=$common_name/O=USP Client Control" \
+    -subj "/CN=$common_name/O=USP Control" \
     -keyout mosquitto/certs/server.key -out mosquitto/certs/server.crt
   cp mosquitto/certs/server.crt mosquitto/certs/ca.crt
 fi

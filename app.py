@@ -487,7 +487,7 @@ def summarized_agents():
     return result
 
 
-app = FastAPI(title="USP Client Control", version=VERSION, docs_url=None, redoc_url=None)
+app = FastAPI(title="USP Control", version=VERSION, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 

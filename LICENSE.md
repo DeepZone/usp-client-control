@@ -4,7 +4,7 @@ Copyright © 2026 NoiSens Services. Alle Rechte vorbehalten.
 
 ## Deutsche Fassung (maßgeblich)
 
-Diese Lizenz gilt für USP Client Control einschließlich des Quellcodes, der ausführbaren Bestandteile, der Dokumentation und der mitgelieferten Grafiken (zusammen die „Software“).
+Diese Lizenz gilt für USP Control einschließlich des Quellcodes, der ausführbaren Bestandteile, der Dokumentation und der mitgelieferten Grafiken (zusammen die „Software“).
 
 ### 1. Nutzungserlaubnis
 
@@ -59,7 +59,7 @@ Es gilt deutsches Recht unter Ausschluss des UN-Kaufrechts, soweit eine solche R
 
 ## English translation (for convenience only)
 
-The German version above is authoritative. This license applies to USP Client Control, including its source code, executable components, documentation and bundled graphics (collectively, the “Software”).
+The German version above is authoritative. This license applies to USP Control, including its source code, executable components, documentation and bundled graphics (collectively, the “Software”).
 
 ### 1. Permission to use
 

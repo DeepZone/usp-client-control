@@ -1,11 +1,26 @@
 # Changelog
 
-Alle wesentlichen Änderungen an USP Client Control werden in dieser Datei dokumentiert. Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
+Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert. Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
+
+## [0.9.1-beta] – 2026-08-02
+
+### Geändert
+
+- Produktname außerhalb der Anmeldung auf **USP Control** verkürzt
+- Loginseite gestalterisch an ACS Control angeglichen; die Loginbeschriftung bleibt **USP Client Control**
+
+### Behoben
+
+- Geräte-Untermenüs zeigen zuverlässig den ausgewählten Darstellungsbereich
+- ausstehende Live-Render können einen frisch gewählten Menübereich nicht mehr mit der Übersicht überschreiben
+- fortlaufende USP-Meldungen verhindern Aktualisierungen nicht mehr durch ständig zurückgesetzte Timer
+- die Agentenliste übernimmt Online- und Kontaktänderungen automatisch
+- Live-Aktualisierungen bleiben auf den Gerätebereich begrenzt und laden nicht die gesamte Seite neu
 
 ## [0.9.0-beta] – 2026-08-02
 

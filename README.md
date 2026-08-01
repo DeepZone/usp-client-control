@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="static/branding/usp-client-control-logo.png" alt="USP Client Control – USP Controller und TR-369 GUI" width="96">
-  <h1>USP Client Control</h1>
+  <img src="static/branding/usp-client-control-logo.png" alt="USP Control – USP Controller und TR-369 GUI" width="96">
+  <h1>USP Control</h1>
   <p><strong>Deutschsprachiger USP-Controller mit moderner TR-369-GUI, MQTT-5-Transport und Live-Geräteansichten.</strong></p>
   <p>
-    <img alt="Version 0.9.0 Beta" src="https://img.shields.io/badge/Version-0.9.0--beta-087f8c">
+    <img alt="Version 0.9.1 Beta" src="https://img.shields.io/badge/Version-0.9.1--beta-087f8c">
     <img alt="Status: aktive Entwicklung" src="https://img.shields.io/badge/Status-aktive_Entwicklung-d97706">
     <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776ab?logo=python&logoColor=white">
     <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white">
@@ -13,7 +13,7 @@
   </p>
 </div>
 
-**USP Client Control ist ein eigenständiger USP-/TR-369-Controller mit Web-GUI für die zentrale Verwaltung kompatibler CPEs.** Der Controller verarbeitet standardkonforme USP Records und Messages über MQTT 5, speichert gemeldete Parameter und bereitet technische Gerätedaten für Service und Support übersichtlich auf.
+**USP Control ist ein eigenständiger USP-/TR-369-Controller mit Web-GUI für die zentrale Verwaltung kompatibler CPEs.** Der Controller verarbeitet standardkonforme USP Records und Messages über MQTT 5, speichert gemeldete Parameter und bereitet technische Gerätedaten für Service und Support übersichtlich auf.
 
 Der Schwerpunkt liegt derzeit auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet-WAN**. Anschlusswerte, Systemzustand, LAN, WLAN, Clients und vorhandene Spektraldaten werden nicht nur als Rohdaten ausgegeben, sondern in fachlichen Ansichten, Diagrammen, Qualitätsanzeigen und Live-Verläufen dargestellt.
 
@@ -23,11 +23,11 @@ Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 
 ## Einblick
 
-![USP Client Control – TR-369- und USP-Controller-Übersicht](docs/usp-client-control-overview.png)
+![USP Control – TR-369- und USP-Controller-Übersicht](docs/usp-client-control-overview.png)
 
 *Aktuelle, datenschutzbereinigte Übersicht mit Controllerstatus, Zugangsmedien und Health-Verteilung.*
 
-## Was USP Client Control bietet
+## Was USP Control bietet
 
 | Bereich | Funktionen |
 | --- | --- |
@@ -54,7 +54,7 @@ Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 ```mermaid
 flowchart LR
     A["USP-Agent / FRITZ!Box"] -->|"MQTT 5 · TLS · USP/TR-369"| M["Eclipse Mosquitto"]
-    M --> C["USP Client Control"]
+    M --> C["USP Control"]
     U["Administrator / Support"] -->|"interne Web-GUI"| C
     C --> D[("SQLite-Datenvolume")]
     C -.->|"optional · Kundennummer"| G["GenieACS NBI"]
@@ -107,13 +107,13 @@ Die initialen Zugangsdaten werden am Ende einmalig im Terminal ausgegeben. Die W
 
 ## USP- und FRITZ!OS-Hinweise
 
-Der tatsächlich nutzbare Funktionsumfang hängt vom Agenten, dessen USP-Version, der Firmware und den eingeräumten Controllerrechten ab. Nicht jedes Gerät liefert jeden standardisierten oder herstellerspezifischen Parameter. USP Client Control zeigt fehlende Messwerte daher nicht als erfundene Ersatzwerte an.
+Der tatsächlich nutzbare Funktionsumfang hängt vom Agenten, dessen USP-Version, der Firmware und den eingeräumten Controllerrechten ab. Nicht jedes Gerät liefert jeden standardisierten oder herstellerspezifischen Parameter. USP Control zeigt fehlende Messwerte daher nicht als erfundene Ersatzwerte an.
 
 Schreiboperationen können durch das Datenmodell, die Zugriffsrechte des Controllers oder das Providerprofil eingeschränkt sein. Neue Funktionen sollten zunächst mit einem Testgerät geprüft werden.
 
 ## Sicherheit
 
-USP Client Control kann Konfigurationen an verwalteten Endgeräten verändern und gehört in ein geschütztes Managementnetz.
+USP Control kann Konfigurationen an verwalteten Endgeräten verändern und gehört in ein geschütztes Managementnetz.
 
 - Weboberfläche nicht direkt aus dem Internet veröffentlichen
 - MQTT ausschließlich mit Authentifizierung, ACL und einem gültigen TLS-Zertifikat betreiben
