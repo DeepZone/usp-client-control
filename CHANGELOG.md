@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.2-beta] – 2026-08-02
+
+### Geändert
+
+- USP-Protokollversion aus den Kennzahlen der Geräteseite entfernt
+- USP-Version als eigene, kompakte Spalte in die Agentenübersicht verschoben
+- Gerätekopf nach der Reduzierung auf Uptime, CPU und letzte Nachricht neu ausgerichtet
+
 ## [0.9.1-beta] – 2026-08-02
 
 ### Geändert

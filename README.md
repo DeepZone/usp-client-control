@@ -3,7 +3,7 @@
   <h1>USP Control</h1>
   <p><strong>Deutschsprachiger USP-Controller mit moderner TR-369-GUI, MQTT-5-Transport und Live-Geräteansichten.</strong></p>
   <p>
-    <img alt="Version 0.9.1 Beta" src="https://img.shields.io/badge/Version-0.9.1--beta-087f8c">
+    <img alt="Version 0.9.2 Beta" src="https://img.shields.io/badge/Version-0.9.2--beta-087f8c">
     <img alt="Status: aktive Entwicklung" src="https://img.shields.io/badge/Status-aktive_Entwicklung-d97706">
     <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776ab?logo=python&logoColor=white">
     <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white">
