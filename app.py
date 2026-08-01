@@ -1,0 +1,979 @@
+import asyncio
+import json
+import os
+import re
+import secrets
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+import paho.mqtt.client as mqtt
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from google.protobuf.json_format import MessageToDict
+from itsdangerous import BadSignature, URLSafeTimedSerializer
+from passlib.context import CryptContext
+from pydantic import BaseModel, Field
+
+import usp_msg_pb2 as usp
+import usp_record_pb2 as record_pb
+
+
+VERSION = Path("VERSION").read_text().strip() if Path("VERSION").exists() else "0.1.0"
+DB_PATH = os.getenv("DATABASE_PATH", "/data/controller.db")
+ENDPOINT_ID = os.getenv("CONTROLLER_ENDPOINT_ID", "usp:noisens:controller")
+CONTROLLER_TOPIC = os.getenv("MQTT_CONTROLLER_TOPIC", "usp/controller")
+AGENT_TOPIC_TEMPLATE = os.getenv("MQTT_AGENT_TOPIC_TEMPLATE", "usp/agent/[[EID]]")
+serializer = URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="usp-session")
+passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
+db_lock = threading.RLock()
+mqtt_client = None
+mqtt_connected = False
+main_loop = None
+live_clients = set()
+GENIEACS_DEFAULT = "http://genieacs:7557"
+ROLES = {"admin", "operator", "viewer"}
+CUSTOM_LOGO_PATH = "/data/custom-company-logo"
+
+DEFAULT_LIVE_PATHS = [
+    # Request the complete object. Besides live resource values this includes
+    # identity, firmware-image data and the ProcessStatus.Process instances.
+    "Device.DeviceInfo.",
+    "Device.IP.Interface.",
+    "Device.Ethernet.Interface.",
+    "Device.WiFi.Radio.",
+    "Device.WiFi.SSID.",
+    "Device.WiFi.AccessPoint.",
+    "Device.Hosts.Host.",
+    "Device.DOCSIS.",
+    "Device.DSL.",
+    "Device.Optical.",
+    "Device.Cellular.",
+]
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+@contextmanager
+def db():
+    with db_lock:
+        connection = sqlite3.connect(DB_PATH)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
+
+
+def initialize_database():
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with db() as connection:
+        connection.executescript("""
+        CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agents(endpoint_id TEXT PRIMARY KEY, protocol_version TEXT, reply_topic TEXT, oui TEXT, product_class TEXT, serial_number TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, online INTEGER NOT NULL DEFAULT 1, mqtt_topic TEXT, remote_meta TEXT DEFAULT '{}');
+        CREATE TABLE IF NOT EXISTS parameters(endpoint_id TEXT NOT NULL, path TEXT NOT NULL, value TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_id,path), FOREIGN KEY(endpoint_id) REFERENCES agents(endpoint_id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, msg_id TEXT UNIQUE NOT NULL, endpoint_id TEXT NOT NULL, action TEXT NOT NULL, request_json TEXT NOT NULL, response_json TEXT, state TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY(endpoint_id) REFERENCES agents(endpoint_id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, endpoint_id TEXT, kind TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS parameter_history(id INTEGER PRIMARY KEY AUTOINCREMENT, endpoint_id TEXT NOT NULL, path TEXT NOT NULL, value TEXT, created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS parameter_history_lookup ON parameter_history(endpoint_id,path,created_at);
+        CREATE TABLE IF NOT EXISTS model_schema(endpoint_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT '', value_type TEXT NOT NULL DEFAULT '', value_change TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_id,path,kind,name));
+        CREATE INDEX IF NOT EXISTS model_schema_lookup ON model_schema(endpoint_id,kind,path);
+        """)
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "display_name" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+        if "updated_at" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        username = os.getenv("ADMIN_USERNAME", "admin")
+        existing = connection.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if not existing:
+            connection.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (username, passwords.hash(os.environ["ADMIN_PASSWORD"]), "admin", now()))
+
+
+def setting(key, default=""):
+    with db() as connection:
+        row = connection.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def save_setting(key, value):
+    with db() as connection:
+        connection.execute("INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, str(value), now()))
+
+
+def live_paths():
+    try:
+        paths = json.loads(setting("live_paths", json.dumps(DEFAULT_LIVE_PATHS)))
+        return [str(path).strip() for path in paths if str(path).strip()]
+    except (TypeError, json.JSONDecodeError):
+        return list(DEFAULT_LIVE_PATHS)
+
+
+def emit_live(event_type, endpoint=None, payload=None):
+    if not main_loop or not main_loop.is_running():
+        return
+    event = {"type": event_type, "endpoint_id": endpoint, "timestamp": now(), "payload": payload or {}}
+    def distribute():
+        for queue in tuple(live_clients):
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            queue.put_nowait(event)
+    main_loop.call_soon_threadsafe(distribute)
+
+
+def record_event(endpoint, kind, detail):
+    with db() as connection:
+        connection.execute("INSERT INTO events(endpoint_id,kind,detail,created_at) VALUES(?,?,?,?)", (endpoint, kind, json.dumps(detail, ensure_ascii=False), now()))
+    emit_live("event", endpoint, {"kind": kind, "detail": detail})
+
+
+def audit(user, action, target="", detail=""):
+    with db() as connection:
+        connection.execute("INSERT INTO audit(username,action,target,detail,created_at) VALUES(?,?,?,?,?)", (user, action, target, detail, now()))
+
+
+def current_user(request: Request, admin=False):
+    token = request.cookies.get("usp_session")
+    if not token:
+        raise HTTPException(401, "Anmeldung erforderlich")
+    try:
+        session = serializer.loads(token, max_age=12 * 3600)
+    except BadSignature:
+        raise HTTPException(401, "Sitzung ungültig")
+    with db() as connection:
+        user = connection.execute("SELECT id,username,display_name,role,active,created_at,updated_at FROM users WHERE id=?", (session.get("id"),)).fetchone()
+    if not user or not user["active"]:
+        raise HTTPException(401, "Benutzerkonto nicht aktiv")
+    if admin and user["role"] != "admin":
+        raise HTTPException(403, "Administratorrechte erforderlich")
+    return dict(user)
+
+
+def upsert_agent(endpoint, version="", reply_topic="", mqtt_topic="", **identity):
+    timestamp = now()
+    with db() as connection:
+        existing = connection.execute("SELECT endpoint_id FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+        if existing:
+            connection.execute("UPDATE agents SET protocol_version=COALESCE(NULLIF(?,''),protocol_version),reply_topic=COALESCE(NULLIF(?,''),reply_topic),mqtt_topic=?,last_seen=?,online=1,oui=COALESCE(NULLIF(?,''),oui),product_class=COALESCE(NULLIF(?,''),product_class),serial_number=COALESCE(NULLIF(?,''),serial_number) WHERE endpoint_id=?", (version, reply_topic, mqtt_topic, timestamp, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), endpoint))
+        else:
+            connection.execute("INSERT INTO agents(endpoint_id,protocol_version,reply_topic,oui,product_class,serial_number,first_seen,last_seen,online,mqtt_topic) VALUES(?,?,?,?,?,?,?,?,1,?)", (endpoint, version, reply_topic, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), timestamp, timestamp, mqtt_topic))
+    emit_live("agent", endpoint, {"last_seen": timestamp, "online": True, "protocol_version": version})
+
+
+def extract_payload(record):
+    kind = record.WhichOneof("record_type")
+    if kind == "no_session_context":
+        return record.no_session_context.payload
+    if kind == "session_context":
+        return b"".join(record.session_context.payload)
+    return None
+
+
+def json_message(message):
+    return MessageToDict(message, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+
+
+def store_get_parameters(endpoint, response):
+    rows = []
+    for requested in response.req_path_results:
+        for resolved in requested.resolved_path_results:
+            for name, value in resolved.result_params.items():
+                path = name if name.startswith("Device.") else resolved.resolved_path + name
+                rows.append((endpoint, path, value, now()))
+    if rows:
+        with db() as connection:
+            current = {row["path"]: row["value"] for row in connection.execute("SELECT path,value FROM parameters WHERE endpoint_id=?", (endpoint,)).fetchall()}
+            history_rows = []
+            metric_pattern = re.compile(r"(Usage|Utilization|Bytes|Packets|Power|SNR|RSRP|RSRQ|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
+            for _, path, value, updated in rows:
+                if current.get(path) == value or not metric_pattern.search(path):
+                    continue
+                try:
+                    float(value)
+                except (TypeError, ValueError):
+                    continue
+                history_rows.append((endpoint, path, value, updated))
+            connection.executemany("INSERT INTO parameters(endpoint_id,path,value,updated_at) VALUES(?,?,?,?) ON CONFLICT(endpoint_id,path) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", rows)
+            if history_rows:
+                connection.executemany("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", history_rows)
+                connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
+        emit_live("parameters", endpoint, {"values": [{"path": path, "value": value, "updated_at": updated} for _, path, value, updated in rows]})
+
+
+def store_supported_model(endpoint, response):
+    rows = []
+    timestamp = now()
+    for requested in response.req_obj_results:
+        for obj in requested.supported_objs:
+            obj_path = obj.supported_obj_path
+            rows.append((endpoint, obj_path, "object", "", usp.GetSupportedDMResp.ObjAccessType.Name(obj.access), "", "", json.dumps({
+                "multi_instance": obj.is_multi_instance,
+                "divergent_paths": list(obj.divergent_paths),
+                "unique_key_sets": [list(item.key_names) for item in obj.unique_key_sets],
+            }, ensure_ascii=False), timestamp))
+            for param in obj.supported_params:
+                rows.append((endpoint, obj_path + param.param_name, "parameter", param.param_name,
+                    usp.GetSupportedDMResp.ParamAccessType.Name(param.access),
+                    usp.GetSupportedDMResp.ParamValueType.Name(param.value_type),
+                    usp.GetSupportedDMResp.ValueChangeType.Name(param.value_change), "{}", timestamp))
+            for command in obj.supported_commands:
+                rows.append((endpoint, obj_path + command.command_name, "command", command.command_name, "",
+                    usp.GetSupportedDMResp.CmdType.Name(command.command_type), "", json.dumps({
+                        "input_args": list(command.input_arg_names), "output_args": list(command.output_arg_names)
+                    }, ensure_ascii=False), timestamp))
+            for event in obj.supported_events:
+                rows.append((endpoint, obj_path + event.event_name, "event", event.event_name, "", "", "",
+                    json.dumps({"args": list(event.arg_names)}, ensure_ascii=False), timestamp))
+    if not rows:
+        return
+    with db() as connection:
+        connection.execute("DELETE FROM model_schema WHERE endpoint_id=?", (endpoint,))
+        connection.executemany("INSERT INTO model_schema(endpoint_id,path,kind,name,access,value_type,value_change,metadata,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", rows)
+    emit_live("schema", endpoint, {"count": len(rows), "updated_at": timestamp})
+
+
+def send_notify_response(endpoint, topic, msg_id, subscription_id, version):
+    message = usp.Msg()
+    message.header.msg_id = msg_id
+    message.header.msg_type = usp.Header.NOTIFY_RESP
+    message.body.response.notify_resp.subscription_id = subscription_id
+    publish_message(endpoint, topic, message, version)
+
+
+def handle_usp_message(endpoint, topic, reply_topic, version, payload):
+    message = usp.Msg()
+    message.ParseFromString(payload)
+    body_type = message.body.WhichOneof("msg_body")
+    msg_type = usp.Header.MsgType.Name(message.header.msg_type)
+    data = json_message(message)
+    record_event(endpoint, msg_type, data)
+    if body_type == "response" or body_type == "error":
+        state = "failed" if body_type == "error" else "complete"
+        error = message.body.error.err_msg if body_type == "error" else None
+        with db() as connection:
+            connection.execute("UPDATE jobs SET state=?,response_json=?,error=?,completed_at=? WHERE msg_id=?", (state, json.dumps(data, ensure_ascii=False), error, now(), message.header.msg_id))
+        if body_type == "response" and message.body.response.WhichOneof("resp_type") == "get_resp":
+            store_get_parameters(endpoint, message.body.response.get_resp)
+        elif body_type == "response" and message.body.response.WhichOneof("resp_type") == "get_supported_dm_resp":
+            store_supported_model(endpoint, message.body.response.get_supported_dm_resp)
+    elif body_type == "request" and message.body.request.WhichOneof("req_type") == "notify":
+        notification = message.body.request.notify
+        notification_type = notification.WhichOneof("notification")
+        if notification_type == "on_board_req":
+            onboard = notification.on_board_req
+            upsert_agent(endpoint, version, reply_topic, topic, oui=onboard.oui, product_class=onboard.product_class, serial_number=onboard.serial_number)
+        elif notification_type == "value_change":
+            value = notification.value_change
+            timestamp = now()
+            with db() as connection:
+                connection.execute("INSERT INTO parameters(endpoint_id,path,value,updated_at) VALUES(?,?,?,?) ON CONFLICT(endpoint_id,path) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (endpoint, value.param_path, value.param_value, timestamp))
+                connection.execute("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", (endpoint, value.param_path, value.param_value, timestamp))
+                connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
+            emit_live("parameter", endpoint, {"path": value.param_path, "value": value.param_value, "updated_at": timestamp})
+        if notification.send_resp and reply_topic:
+            send_notify_response(endpoint, reply_topic, message.header.msg_id, notification.subscription_id, version)
+
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    global mqtt_connected
+    mqtt_connected = reason_code == 0
+    if mqtt_connected:
+        client.subscribe(CONTROLLER_TOPIC + "/#", qos=1)
+
+
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+    global mqtt_connected
+    mqtt_connected = False
+
+
+def on_message(client, userdata, mqtt_message):
+    try:
+        record = record_pb.Record()
+        record.ParseFromString(mqtt_message.payload)
+        endpoint = record.from_id
+        reply_topic = getattr(mqtt_message.properties, "ResponseTopic", None) or ""
+        kind = record.WhichOneof("record_type")
+        if kind == "mqtt_connect":
+            reply_topic = record.mqtt_connect.subscribed_topic or reply_topic
+            upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic)
+            record_event(endpoint, "MQTT_CONNECT", {"version": record.version, "reply_topic": reply_topic})
+            return
+        upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic)
+        payload = extract_payload(record)
+        if payload:
+            handle_usp_message(endpoint, mqtt_message.topic, reply_topic or agent_topic(endpoint), record.version, payload)
+    except Exception as exc:
+        record_event(None, "DECODE_ERROR", {"topic": mqtt_message.topic, "error": str(exc)})
+
+
+def agent_topic(endpoint):
+    with db() as connection:
+        row = connection.execute("SELECT reply_topic FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+    if row and row["reply_topic"]:
+        return row["reply_topic"]
+    return AGENT_TOPIC_TEMPLATE.replace("[[EID]]", endpoint)
+
+
+def publish_message(endpoint, topic, message, version="1.3"):
+    if not mqtt_client or not mqtt_connected:
+        raise RuntimeError("MQTT-Broker nicht verbunden")
+    record = record_pb.Record(version=version or "1.3", to_id=endpoint, from_id=ENDPOINT_ID, payload_security=record_pb.Record.PLAINTEXT)
+    record.no_session_context.payload = message.SerializeToString()
+    properties = Properties(PacketTypes.PUBLISH)
+    properties.ResponseTopic = CONTROLLER_TOPIC
+    properties.ContentType = "application/vnd.bbf.usp.msg"
+    result = mqtt_client.publish(topic, record.SerializeToString(), qos=1, properties=properties)
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError(f"MQTT Publish fehlgeschlagen: {result.rc}")
+
+
+def build_message(action, payload):
+    message = usp.Msg()
+    message.header.msg_id = secrets.token_hex(12)
+    request = message.body.request
+    if action == "get":
+        message.header.msg_type = usp.Header.GET
+        request.get.param_paths.extend(payload.get("paths") or ["Device."])
+        request.get.max_depth = int(payload.get("max_depth", 0))
+    elif action == "get_instances":
+        message.header.msg_type = usp.Header.GET_INSTANCES
+        request.get_instances.obj_paths.extend(payload.get("paths") or ["Device."])
+        request.get_instances.first_level_only = bool(payload.get("first_level_only", False))
+    elif action == "get_supported_dm":
+        message.header.msg_type = usp.Header.GET_SUPPORTED_DM
+        request.get_supported_dm.obj_paths.extend(payload.get("paths") or ["Device."])
+        request.get_supported_dm.first_level_only = bool(payload.get("first_level_only", False))
+        request.get_supported_dm.return_commands = True
+        request.get_supported_dm.return_events = True
+        request.get_supported_dm.return_params = True
+        request.get_supported_dm.return_unique_key_sets = True
+    elif action == "set":
+        message.header.msg_type = usp.Header.SET
+        request.set.allow_partial = bool(payload.get("allow_partial", False))
+        update = request.set.update_objs.add(obj_path=payload["object_path"])
+        for item in payload["parameters"]:
+            update.param_settings.add(param=item["name"], value=str(item["value"]), required=bool(item.get("required", True)))
+    elif action == "add":
+        message.header.msg_type = usp.Header.ADD
+        request.add.allow_partial = bool(payload.get("allow_partial", False))
+        create = request.add.create_objs.add(obj_path=payload["object_path"])
+        for item in payload.get("parameters", []):
+            create.param_settings.add(param=item["name"], value=str(item["value"]), required=bool(item.get("required", True)))
+    elif action == "delete":
+        message.header.msg_type = usp.Header.DELETE
+        request.delete.allow_partial = bool(payload.get("allow_partial", False))
+        request.delete.obj_paths.extend(payload["paths"])
+    elif action == "operate":
+        message.header.msg_type = usp.Header.OPERATE
+        request.operate.command = payload["command"]
+        request.operate.command_key = payload.get("command_key") or message.header.msg_id
+        request.operate.send_resp = True
+        request.operate.input_args.update({str(k): str(v) for k, v in payload.get("input_args", {}).items()})
+    else:
+        raise ValueError("Nicht unterstützte USP-Aktion")
+    return message
+
+
+def start_mqtt():
+    global mqtt_client
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=ENDPOINT_ID, protocol=mqtt.MQTTv5)
+    mqtt_client.username_pw_set(os.getenv("MQTT_CONTROLLER_USERNAME", "controller"), os.environ["MQTT_CONTROLLER_PASSWORD"])
+    if os.getenv("MQTT_TLS", "false").lower() == "true":
+        mqtt_client.tls_set()
+    mqtt_client.on_connect = on_connect
+    mqtt_client.on_disconnect = on_disconnect
+    mqtt_client.on_message = on_message
+    mqtt_client.connect_async(os.getenv("MQTT_HOST", "mqtt"), int(os.getenv("MQTT_PORT", "1883")), keepalive=60)
+    mqtt_client.loop_start()
+
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+class JobRequest(BaseModel):
+    action: str
+    payload: dict = Field(default_factory=dict)
+
+
+class ControllerSettings(BaseModel):
+    live_paths: list[str] = Field(default_factory=list)
+    genieacs_url: str = ""
+
+
+def genieacs_devices():
+    url = setting("genieacs_url", GENIEACS_DEFAULT).rstrip("/")
+    query = urllib.parse.urlencode({"projection": "_id,VirtualParameters.CustomerNumber"})
+    try:
+        with urllib.request.urlopen(f"{url}/devices/?{query}", timeout=6) as response:
+            rows = json.load(response)
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
+    return rows
+
+
+def genieacs_customer_map():
+    result = {}
+    for device in genieacs_devices():
+        device_id = urllib.parse.unquote(str(device.get("_id", "")))
+        number = (((device.get("VirtualParameters") or {}).get("CustomerNumber") or {}).get("_value") or "")
+        if not number:
+            continue
+        for token in re.findall(r"[0-9A-F]{12,16}", device_id.upper()):
+            result[token] = str(number)
+    return result
+
+
+def summarized_agents():
+    cutoff = datetime.fromtimestamp(time.time() - 600, timezone.utc).isoformat()
+    try:
+        customers = genieacs_customer_map()
+    except RuntimeError:
+        customers = {}
+    with db() as connection:
+        agent_rows = connection.execute("SELECT * FROM agents ORDER BY last_seen DESC").fetchall()
+        parameter_rows = connection.execute("SELECT endpoint_id,path,value FROM parameters").fetchall()
+    by_agent = {}
+    for row in parameter_rows:
+        by_agent.setdefault(row["endpoint_id"], {})[row["path"]] = row["value"]
+    result = []
+    for raw in agent_rows:
+        row, params = dict(raw), by_agent.get(raw["endpoint_id"], {})
+        serial = str(row.get("serial_number") or "").upper()
+        customer = next((number for token, number in customers.items() if serial and (serial in token or token in serial)), "")
+        if str(params.get("Device.DOCSIS.InterfaceNumberOfEntries", "0")) != "0":
+            access = "Cable"
+            healthy = params.get("Device.DOCSIS.Interface.1.ConnectivityStatus.Value") == "Operational"
+        elif str(params.get("Device.DSL.LineNumberOfEntries", "0")) != "0":
+            access = "DSL"
+            healthy = str(params.get("Device.DSL.Line.1.Status", "")).lower() == "up"
+        elif str(params.get("Device.Cellular.InterfaceNumberOfEntries", "0")) != "0":
+            access = "Mobile"
+            rsrp = float(params.get("Device.Cellular.Interface.1.RSRP", -200) or -200)
+            healthy = rsrp >= -110
+        elif str(params.get("Device.Optical.InterfaceNumberOfEntries", "0")) != "0":
+            access = "Fiber"
+            healthy = str(params.get("Device.Optical.Interface.1.Status", "")).lower() == "up"
+        else:
+            access, healthy = "WAN", None
+        online = row["last_seen"] >= cutoff
+        health = "Kritisch" if not online else "Gesund" if healthy is True else "Warnung" if healthy is False else "Unbekannt"
+        row.update({
+            "model": params.get("Device.DeviceInfo.ModelName") or row.get("product_class") or "USP-Agent",
+            "firmware": params.get("Device.DeviceInfo.SoftwareVersion") or params.get("Device.DeviceInfo.FirmwareImage.1.Version") or "–",
+            "access": access, "health": health, "online": online, "customer_number": customer,
+        })
+        result.append(row)
+    return result
+
+
+app = FastAPI(title="USP Client Control", version=VERSION, docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.on_event("startup")
+async def startup():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+    initialize_database()
+    start_mqtt()
+
+
+@app.get("/")
+def index():
+    return FileResponse("static/index.html")
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True, "version": VERSION, "mqtt": mqtt_connected, "endpoint_id": ENDPOINT_ID}
+
+
+@app.websocket("/api/live")
+async def live(websocket: WebSocket):
+    try:
+        current_user(websocket)
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    queue = asyncio.Queue(maxsize=250)
+    live_clients.add(queue)
+    await websocket.send_json({"type": "hello", "timestamp": now(), "payload": {"mqtt": mqtt_connected, "endpoint_id": ENDPOINT_ID}})
+    try:
+        while True:
+            await websocket.send_json(await queue.get())
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        live_clients.discard(queue)
+
+
+@app.post("/api/login")
+def login(data: Login, request: Request):
+    with db() as connection:
+        user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (data.username,)).fetchone()
+    if not user or not passwords.verify(data.password, user["password_hash"]):
+        raise HTTPException(401, "Benutzername oder Kennwort falsch")
+    response = {"ok": True, "username": user["username"], "display_name": user["display_name"], "role": user["role"]}
+    from fastapi.responses import JSONResponse
+    result = JSONResponse(response)
+    result.set_cookie("usp_session", serializer.dumps({"id": user["id"]}), httponly=True, samesite="strict", max_age=43200)
+    audit(user["username"], "Anmeldung")
+    return result
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    user = current_user(request)
+    from fastapi.responses import JSONResponse
+    result = JSONResponse({"ok": True})
+    result.delete_cookie("usp_session")
+    audit(user["username"], "Abmeldung")
+    return result
+
+
+@app.get("/api/session")
+def session(request: Request):
+    user = current_user(request)
+    return {"authenticated": True, **user, "version": VERSION}
+
+
+def user_json(user):
+    return {"id": user["id"], "username": user["username"], "display_name": user["display_name"],
+            "role": user["role"], "active": bool(user["active"]), "created_at": user["created_at"],
+            "updated_at": user["updated_at"]}
+
+
+@app.get("/api/users")
+def users_list(request: Request):
+    current_user(request, admin=True)
+    with db() as connection:
+        rows = connection.execute("SELECT * FROM users ORDER BY username COLLATE NOCASE").fetchall()
+    return [user_json(row) for row in rows]
+
+
+@app.post("/api/users")
+async def user_create(request: Request):
+    actor = current_user(request, admin=True)
+    data = await request.json()
+    username, password, role = str(data.get("username", "")).strip(), str(data.get("password", "")), str(data.get("role", "viewer"))
+    if len(username) < 3 or len(password) < 10 or role not in ROLES:
+        raise HTTPException(400, "Benutzername, Kennwort oder Rolle ungültig")
+    try:
+        with db() as connection:
+            cursor = connection.execute("INSERT INTO users(username,display_name,password_hash,role,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (username, str(data.get("display_name", "")).strip(), passwords.hash(password), role, int(bool(data.get("active", True))), now(), now()))
+            row = connection.execute("SELECT * FROM users WHERE id=?", (cursor.lastrowid,)).fetchone()
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Benutzername ist bereits vergeben") from exc
+    audit(actor["username"], "Benutzer angelegt", username, role)
+    return user_json(row)
+
+
+@app.put("/api/users/{user_id}")
+async def user_update(user_id: int, request: Request):
+    actor = current_user(request, admin=True)
+    data = await request.json()
+    with db() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Benutzer nicht gefunden")
+        username = str(data.get("username", row["username"])).strip()
+        role = str(data.get("role", row["role"]))
+        active = int(bool(data.get("active", bool(row["active"]))))
+        if len(username) < 3 or role not in ROLES:
+            raise HTTPException(400, "Benutzername oder Rolle ungültig")
+        if user_id == actor["id"] and (role != "admin" or not active):
+            raise HTTPException(400, "Der eigene Administratorzugang darf nicht deaktiviert oder herabgestuft werden")
+        if row["role"] == "admin" and (role != "admin" or not active):
+            if connection.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0] <= 1:
+                raise HTTPException(400, "Der letzte aktive Administrator muss erhalten bleiben")
+        values = [username, str(data.get("display_name", row["display_name"])).strip(), role, active]
+        password = str(data.get("password", ""))
+        try:
+            if password:
+                if len(password) < 10:
+                    raise HTTPException(400, "Das Kennwort muss mindestens 10 Zeichen lang sein")
+                connection.execute("UPDATE users SET username=?,display_name=?,role=?,active=?,password_hash=?,updated_at=? WHERE id=?", (*values, passwords.hash(password), now(), user_id))
+            else:
+                connection.execute("UPDATE users SET username=?,display_name=?,role=?,active=?,updated_at=? WHERE id=?", (*values, now(), user_id))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "Benutzername ist bereits vergeben") from exc
+        updated = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    audit(actor["username"], "Benutzer geändert", username, role)
+    return user_json(updated)
+
+
+@app.delete("/api/users/{user_id}")
+def user_delete(user_id: int, request: Request):
+    actor = current_user(request, admin=True)
+    if user_id == actor["id"]:
+        raise HTTPException(400, "Der eigene Benutzer kann nicht gelöscht werden")
+    with db() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Benutzer nicht gefunden")
+        if row["role"] == "admin" and connection.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0] <= 1:
+            raise HTTPException(400, "Der letzte aktive Administrator kann nicht gelöscht werden")
+        connection.execute("DELETE FROM users WHERE id=?", (user_id,))
+    audit(actor["username"], "Benutzer gelöscht", row["username"])
+    return {"ok": True}
+
+
+@app.get("/api/profile")
+def profile_get(request: Request):
+    user = current_user(request)
+    return user_json(user)
+
+
+@app.put("/api/profile")
+async def profile_update(request: Request):
+    user = current_user(request)
+    data = await request.json()
+    with db() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        if not passwords.verify(str(data.get("current_password", "")), row["password_hash"]):
+            raise HTTPException(400, "Aktuelles Kennwort ist falsch")
+        username, display_name = str(data.get("username", row["username"])).strip(), str(data.get("display_name", row["display_name"])).strip()
+        if len(username) < 3:
+            raise HTTPException(400, "Benutzername muss mindestens 3 Zeichen lang sein")
+        try:
+            connection.execute("UPDATE users SET username=?,display_name=?,updated_at=? WHERE id=?", (username, display_name, now(), user["id"]))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "Benutzername ist bereits vergeben") from exc
+        updated = connection.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    audit(username, "Eigenes Profil geändert")
+    return user_json(updated)
+
+
+@app.put("/api/profile/password")
+async def profile_password(request: Request):
+    user = current_user(request)
+    data = await request.json()
+    new_password = str(data.get("new_password", ""))
+    if len(new_password) < 10:
+        raise HTTPException(400, "Das neue Kennwort muss mindestens 10 Zeichen lang sein")
+    with db() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        if not passwords.verify(str(data.get("current_password", "")), row["password_hash"]):
+            raise HTTPException(400, "Aktuelles Kennwort ist falsch")
+        connection.execute("UPDATE users SET password_hash=?,updated_at=? WHERE id=?", (passwords.hash(new_password), now(), user["id"]))
+    audit(user["username"], "Eigenes Kennwort geändert")
+    return {"ok": True}
+
+
+@app.get("/api/branding")
+def branding_get():
+    custom = Path(CUSTOM_LOGO_PATH).is_file() and bool(setting("brand_logo_content_type"))
+    return {"custom_logo": custom, "logo_url": "/api/branding/logo" if custom else "/static/branding/noisens-logo.png"}
+
+
+@app.get("/api/branding/logo")
+def branding_logo():
+    content_type = setting("brand_logo_content_type")
+    path = CUSTOM_LOGO_PATH if content_type and Path(CUSTOM_LOGO_PATH).is_file() else "static/branding/noisens-logo.png"
+    return FileResponse(path, media_type=content_type or "image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/branding/logo")
+async def branding_upload(request: Request, logo: UploadFile = File(...)):
+    actor = current_user(request, admin=True)
+    data = await logo.read(2 * 1024 * 1024 + 1)
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(400, "Das Logo darf maximal 2 MB groß sein")
+    signatures = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"))
+    content_type = next((kind for signature, kind in signatures if data.startswith(signature)), None)
+    if content_type == "image/webp" and data[8:12] != b"WEBP":
+        content_type = None
+    if not content_type:
+        raise HTTPException(400, "Erlaubt sind PNG, JPEG oder WebP")
+    temporary = CUSTOM_LOGO_PATH + ".new"
+    Path(temporary).write_bytes(data)
+    os.replace(temporary, CUSTOM_LOGO_PATH)
+    save_setting("brand_logo_content_type", content_type)
+    audit(actor["username"], "Unternehmenslogo geändert", logo.filename or "Logo")
+    return {"ok": True, "logo_url": "/api/branding/logo"}
+
+
+@app.delete("/api/branding/logo")
+def branding_reset(request: Request):
+    actor = current_user(request, admin=True)
+    Path(CUSTOM_LOGO_PATH).unlink(missing_ok=True)
+    save_setting("brand_logo_content_type", "")
+    audit(actor["username"], "Unternehmenslogo zurückgesetzt", "NoiSens Services")
+    return {"ok": True, "logo_url": "/static/branding/noisens-logo.png"}
+
+
+@app.get("/api/settings")
+def controller_settings(request: Request):
+    current_user(request, admin=True)
+    return {
+        "endpoint_id": ENDPOINT_ID,
+        "controller_topic": CONTROLLER_TOPIC,
+        "agent_topic_template": AGENT_TOPIC_TEMPLATE,
+        "mqtt_host": os.getenv("MQTT_HOST", "mqtt"),
+        "mqtt_port": int(os.getenv("MQTT_PORT", "1883")),
+        "mqtt_tls": os.getenv("MQTT_TLS", "false").lower() == "true",
+        "mqtt_username": os.getenv("MQTT_CONTROLLER_USERNAME", "controller"),
+        "mqtt_password_configured": bool(os.getenv("MQTT_CONTROLLER_PASSWORD")),
+        "mqtt_connected": mqtt_connected,
+        "live_paths": live_paths(),
+        "genieacs_url": setting("genieacs_url", GENIEACS_DEFAULT),
+    }
+
+
+@app.put("/api/settings")
+def controller_settings_update(data: ControllerSettings, request: Request):
+    user = current_user(request, admin=True)
+    paths = []
+    for raw in data.live_paths:
+        path = raw.strip()
+        if not path.startswith("Device.") or len(path) > 512:
+            raise HTTPException(400, f"Ungültiger USP-Pfad: {path or 'leer'}")
+        if path not in paths:
+            paths.append(path)
+    if not paths or len(paths) > 100:
+        raise HTTPException(400, "Bitte 1 bis 100 Live-Pfade angeben")
+    save_setting("live_paths", json.dumps(paths, ensure_ascii=False))
+    genieacs_url = data.genieacs_url.strip().rstrip("/") or setting("genieacs_url", GENIEACS_DEFAULT)
+    parsed = urllib.parse.urlparse(genieacs_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(400, "Ungültige GenieACS-API-URL")
+    try:
+        query = urllib.parse.urlencode({"projection": "_id", "limit": "1"})
+        with urllib.request.urlopen(f"{genieacs_url}/devices/?{query}", timeout=6) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"HTTP {response.status}")
+    except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
+        raise HTTPException(400, f"GenieACS nicht erreichbar: {exc}") from exc
+    save_setting("genieacs_url", genieacs_url)
+    audit(user["username"], "Live-Profil geändert", detail=f"{len(paths)} Pfade")
+    return {"ok": True, "live_paths": paths, "genieacs_url": genieacs_url}
+
+
+@app.get("/api/genieacs/status")
+def genieacs_status(request: Request):
+    current_user(request)
+    started = time.perf_counter()
+    try:
+        devices = genieacs_devices()
+        return {"ok": True, "status": "Verbunden", "latency_ms": round((time.perf_counter() - started) * 1000), "devices": len(devices)}
+    except RuntimeError as exc:
+        return {"ok": False, "status": "Getrennt", "error": str(exc), "latency_ms": round((time.perf_counter() - started) * 1000)}
+
+
+@app.get("/api/dashboard")
+def dashboard(request: Request):
+    current_user(request)
+    rows = summarized_agents()
+    with db() as connection:
+        jobs = connection.execute("SELECT state,COUNT(*) count FROM jobs GROUP BY state").fetchall()
+    job_counts = {row["state"]: row["count"] for row in jobs}
+    return {"agents": {"total": len(rows), "online": sum(1 for row in rows if row["online"])}, "jobs": job_counts, "active_errors": job_counts.get("failed", 0), "attention": sum(1 for row in rows if row["health"] in {"Warnung", "Kritisch"}), "access": {name: sum(1 for row in rows if row["access"] == name) for name in ["Cable", "DSL", "Mobile", "Fiber", "WAN"]}, "health": {name: sum(1 for row in rows if row["health"] == name) for name in ["Gesund", "Warnung", "Kritisch", "Unbekannt"]}, "mqtt": mqtt_connected, "endpoint_id": ENDPOINT_ID}
+
+
+@app.get("/api/agents")
+def agents(request: Request):
+    current_user(request)
+    rows = summarized_agents()
+    with db() as connection:
+        counts = {row["endpoint_id"]: row["count"] for row in connection.execute("SELECT endpoint_id,COUNT(*) count FROM parameters GROUP BY endpoint_id").fetchall()}
+    for row in rows:
+        row["parameter_count"] = counts.get(row["endpoint_id"], 0)
+    return rows
+
+
+@app.get("/api/agents/{endpoint}")
+def agent(endpoint: str, request: Request):
+    current_user(request)
+    with db() as connection:
+        row = connection.execute("SELECT * FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+        if not row:
+            raise HTTPException(404, "USP-Agent nicht gefunden")
+        params = connection.execute("SELECT path,value,updated_at FROM parameters WHERE endpoint_id=? ORDER BY path LIMIT 10000", (endpoint,)).fetchall()
+        jobs = connection.execute("SELECT * FROM jobs WHERE endpoint_id=? ORDER BY id DESC LIMIT 100", (endpoint,)).fetchall()
+        events = connection.execute("SELECT * FROM events WHERE endpoint_id=? ORDER BY id DESC LIMIT 100", (endpoint,)).fetchall()
+    return {"agent": dict(row), "parameters": [dict(x) for x in params], "jobs": [dict(x) for x in jobs], "events": [dict(x) for x in events]}
+
+
+@app.get("/api/agents/{endpoint}/history")
+def agent_history(endpoint: str, request: Request, path: str = "", hours: int = 24):
+    current_user(request)
+    hours = min(max(hours, 1), 168)
+    cutoff = datetime.fromtimestamp(time.time() - hours * 3600, timezone.utc).isoformat()
+    query = "SELECT path,value,created_at FROM parameter_history WHERE endpoint_id=? AND created_at>=?"
+    values = [endpoint, cutoff]
+    if path:
+        query += " AND path LIKE ?"
+        values.append(path.rstrip("%") + "%")
+    query += " ORDER BY created_at LIMIT 20000"
+    with db() as connection:
+        rows = connection.execute(query, values).fetchall()
+    return {"hours": hours, "values": [dict(row) for row in rows]}
+
+
+@app.get("/api/agents/{endpoint}/schema")
+def agent_schema(endpoint: str, request: Request):
+    current_user(request)
+    with db() as connection:
+        exists = connection.execute("SELECT 1 FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+        if not exists:
+            raise HTTPException(404, "USP-Agent nicht gefunden")
+        rows = connection.execute("SELECT path,kind,name,access,value_type,value_change,metadata,updated_at FROM model_schema WHERE endpoint_id=? ORDER BY path,kind", (endpoint,)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["metadata"] = json.loads(item["metadata"] or "{}")
+        result.append(item)
+    return {"items": result, "count": len(result)}
+
+
+@app.post("/api/agents/{endpoint}/refresh-live")
+def refresh_live(endpoint: str, request: Request):
+    return create_job(endpoint, JobRequest(action="get", payload={"paths": live_paths(), "max_depth": 0}), request)
+
+
+@app.post("/api/agents/{endpoint}/subscribe-live")
+def subscribe_live(endpoint: str, request: Request):
+    # FRITZ!OS limits ReferenceList to 256 characters and validates every path.
+    # Create one immutable subscription per path and skip model branches the
+    # connected agent does not actually expose.
+    # FRITZ!OS 8.24 currently advertises ValueChange for only a small subset
+    # of the analysis values. CPUUsage is confirmed notification-capable;
+    # the remaining profile paths stay available for live GET responses and
+    # unsolicited Notify messages without producing invalid USP jobs.
+    notifiable = {"Device.DeviceInfo.ProcessStatus.CPUUsage"}
+    available = []
+    configured_paths = live_paths()
+    with db() as connection:
+        for path in notifiable:
+            # Live profiles normally contain object roots such as
+            # Device.DeviceInfo.; a notification-capable leaf below that root
+            # must therefore be considered configured as well.
+            if not any(path == configured or (configured.endswith(".") and path.startswith(configured)) for configured in configured_paths):
+                continue
+            if path.endswith("."):
+                exists = connection.execute(
+                    "SELECT 1 FROM parameters WHERE endpoint_id=? AND path LIKE ? LIMIT 1",
+                    (endpoint, path + "%"),
+                ).fetchone()
+            else:
+                exists = connection.execute(
+                    "SELECT 1 FROM parameters WHERE endpoint_id=? AND path=? LIMIT 1",
+                    (endpoint, path),
+                ).fetchone()
+            if exists:
+                available.append(path)
+    if not available:
+        raise HTTPException(400, "Keine unterstützten Live-Pfade im aktuellen Datenbestand")
+
+    # Keep this operation idempotent. FRITZ!OS enforces Subscription.ID as a
+    # unique key and returns USP 7025 when the button is pressed a second time.
+    # Completed ADD responses are retained in the job journal and therefore
+    # remain usable even when the agent did not expose the subscription table.
+    existing_paths = set()
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT state,request_json,response_json FROM jobs "
+            "WHERE endpoint_id=? AND action='add' ORDER BY id DESC",
+            (endpoint,),
+        ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["request_json"] or "{}")
+            if payload.get("object_path") != "Device.LocalAgent.Subscription.":
+                continue
+            parameters = {
+                item.get("name"): str(item.get("value", ""))
+                for item in payload.get("parameters", [])
+                if isinstance(item, dict)
+            }
+            path = parameters.get("ReferenceList")
+            if not path:
+                continue
+            if row["state"] == "complete":
+                existing_paths.add(path)
+                continue
+            # A duplicate-key response also proves that this persistent
+            # subscription already exists on the agent.
+            response = json.loads(row["response_json"] or "{}")
+            errors = response.get("body", {}).get("error", {}).get("param_errs", [])
+            if any(error.get("err_code") == 7025 and error.get("param_path") == "ID" for error in errors):
+                existing_paths.add(path)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    missing = [path for path in available if path not in existing_paths]
+    jobs = []
+    for index, path in enumerate(missing, 1):
+        payload = {
+            "object_path": "Device.LocalAgent.Subscription.",
+            "parameters": [
+                {"name": "Enable", "value": "true", "required": True},
+                {"name": "ID", "value": f"noisens-live-{index}", "required": True},
+                {"name": "NotifType", "value": "ValueChange", "required": True},
+                {"name": "ReferenceList", "value": path, "required": True},
+                {"name": "Persistent", "value": "true", "required": True},
+                {"name": "TimeToLive", "value": "0", "required": False},
+            ],
+        }
+        jobs.append(create_job(endpoint, JobRequest(action="add", payload=payload), request))
+    return {
+        "ok": True,
+        "status": "created" if jobs else "already_active",
+        "subscriptions": jobs,
+        "paths": available,
+        "existing_paths": sorted(existing_paths.intersection(available)),
+    }
+
+
+@app.post("/api/agents/{endpoint}/jobs")
+def create_job(endpoint: str, data: JobRequest, request: Request):
+    user = current_user(request)
+    if data.action in {"set", "add", "delete", "operate"} and user["role"] == "viewer":
+        raise HTTPException(403, "Diese Rolle besitzt ausschließlich Leserechte")
+    with db() as connection:
+        agent_row = connection.execute("SELECT protocol_version,reply_topic FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+    if not agent_row:
+        raise HTTPException(404, "USP-Agent nicht gefunden")
+    try:
+        message = build_message(data.action, data.payload)
+        topic = agent_row["reply_topic"] or agent_topic(endpoint)
+        with db() as connection:
+            connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, data.action, json.dumps(data.payload, ensure_ascii=False), "queued", now()))
+        publish_message(endpoint, topic, message, agent_row["protocol_version"] or "1.3")
+        with db() as connection:
+            connection.execute("UPDATE jobs SET state='sent' WHERE msg_id=?", (message.header.msg_id,))
+        audit(user["username"], f"USP {data.action}", endpoint, json.dumps(data.payload, ensure_ascii=False))
+        return {"ok": True, "msg_id": message.header.msg_id, "topic": topic}
+    except Exception as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.get("/api/audit")
+def audit_log(request: Request):
+    current_user(request, admin=True)
+    with db() as connection:
+        rows = connection.execute("SELECT * FROM audit ORDER BY id DESC LIMIT 500").fetchall()
+    return [dict(row) for row in rows]

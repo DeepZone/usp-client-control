@@ -1,0 +1,35 @@
+services:
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    ports:
+      - "${MQTT_BIND_ADDRESS:-0.0.0.0}:1883:1883"
+      - "${MQTT_BIND_ADDRESS:-0.0.0.0}:8883:8883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - ./mosquitto/certs:/mosquitto/certs:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u controller -P \"$${MQTT_CONTROLLER_PASSWORD}\" -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    env_file: .env
+
+  controller:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mqtt:
+        condition: service_started
+    env_file: .env
+    ports:
+      - "${GUI_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

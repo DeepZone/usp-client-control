@@ -1,0 +1,9 @@
+user controller
+topic readwrite usp/#
+topic read $SYS/#
+
+user box
+topic write usp/controller
+topic read usp/agent/%c/#
+topic read usp/agent/#
+

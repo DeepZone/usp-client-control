@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USP Client Control</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/professional.css?v=0.9.0">
+</head>
+<body>
+  <section id="login" class="login-shell">
+    <form id="login-form" class="login-card">
+      <img class="product-logo login-logo" src="/static/branding/usp-client-control-logo.png?v=0.9.0" width="64" height="64" alt="USP Client Control">
+      <h1>USP Client Control</h1>
+      <p>Professionelle TR-369-Geräteverwaltung</p>
+      <span class="login-version">Version 0.9.0</span>
+      <label>Benutzername<input name="username" autocomplete="username" required></label>
+      <label>Kennwort<input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Anmelden</button>
+      <div class="login-company"><img data-company-logo src="/static/branding/noisens-logo.png" alt="NoiSens Services"><span>© 2026 NoiSens Services</span></div>
+    </form>
+  </section>
+  <div id="app" class="app hidden">
+    <aside>
+      <div class="brand"><img class="product-logo" src="/static/branding/usp-client-control-logo.png?v=0.9.0" width="42" height="42" alt="USP Client Control"><div><strong>USP Client Control</strong><small id="version"></small></div></div>
+      <nav id="main-nav">
+        <button data-view="dashboard" class="active">Übersicht</button>
+        <button data-view="agents">USP-Agenten</button>
+        <button data-view="account">Account</button>
+        <button data-view="audit" data-admin>Aktivitäten</button>
+        <button data-view="users" data-admin>Benutzer</button>
+        <button data-view="settings" data-admin>Konfiguration</button>
+      </nav>
+      <div class="account-summary"><div class="account-line"><strong id="account-name"></strong><span id="account-role"></span></div><button id="logout">Abmelden</button></div>
+      <div class="company-brand"><img data-company-logo src="/static/branding/noisens-logo.png" alt="NoiSens Services"><span>© 2026 NoiSens Services</span></div>
+    </aside>
+    <main><header><div><h1 id="title">Übersicht</h1><p id="subtitle">Betriebszustand des TR-369 Controllers</p></div><div class="header-status"><span id="live-status" class="live-pill">Live</span><span id="mqtt-status" class="badge"></span></div></header><section id="content"></section><footer>USP Client Control · © 2026 NoiSens Services</footer></main>
+  </div>
+  <dialog id="user-dialog" class="model-dialog"><form id="user-form"><div class="card-head"><div><h2 id="user-dialog-title">Benutzer bearbeiten</h2><p class="muted">Rolle, Status und Zugangsdaten verwalten</p></div><button type="button" class="secondary" data-user-close>×</button></div><input type="hidden" name="id"><label>Benutzername<input name="username" required minlength="3"></label><label>Anzeigename<input name="display_name"></label><label>Rolle<select name="role"><option value="viewer">Nur-Lesen</option><option value="operator">Operator</option><option value="admin">Administrator</option></select></label><label>Kennwort<input name="password" type="password" minlength="10" placeholder="Bei Bearbeitung leer lassen"></label><label class="check"><input name="active" type="checkbox" checked> Zugang aktiv</label><div class="actions"><button type="button" class="secondary" data-user-close>Abbrechen</button><button class="primary">Speichern</button></div></form></dialog>
+  <div id="toast"></div>
+  <script src="/static/app.js?v=0.9.0"></script>
+</body>
+</html>

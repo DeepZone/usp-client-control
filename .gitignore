@@ -1,0 +1,10 @@
+.env
+data/
+mosquitto/data/
+mosquitto/log/
+mosquitto/certs/*.key
+mosquitto/certs/*.crt
+mosquitto/config/passwords
+__pycache__/
+*.py[cod]
+.DS_Store
