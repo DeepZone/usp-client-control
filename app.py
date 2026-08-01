@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -40,6 +41,8 @@ mqtt_client = None
 mqtt_connected = False
 main_loop = None
 live_clients = set()
+ripe_cache = {}
+ripe_cache_lock = threading.RLock()
 GENIEACS_DEFAULT = "http://genieacs:7557"
 ROLES = {"admin", "operator", "viewer"}
 CUSTOM_LOGO_PATH = "/data/custom-company-logo"
@@ -115,6 +118,53 @@ def setting(key, default=""):
 def save_setting(key, value):
     with db() as connection:
         connection.execute("INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, str(value), now()))
+
+
+def wan_ip_from_parameters(parameters):
+    preferred = ["Device.IP.Interface.1.IPv4Address.1.IPAddress", "Device.IP.Interface.1.IPv6Address.1.IPAddress"]
+    values = {row["path"]: row["value"] for row in parameters}
+    candidates = [values.get(path) for path in preferred]
+    candidates.extend(row["value"] for row in parameters if re.match(r"^Device\.IP\.Interface\.(?!1000\.)\d+\.IPv[46]Address\.\d+\.IPAddress$", row["path"]))
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(str(candidate or "").split("%", 1)[0])
+        except ValueError:
+            continue
+        if not address.is_unspecified and not address.is_loopback and not address.is_link_local:
+            return str(address)
+    return ""
+
+
+def ripe_network_info(address):
+    """Resolve a public WAN address to its originating ASN and RIPE holder."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return {"ip": address, "public": False, "provider": "", "asn": "", "prefix": ""}
+    if not ip.is_global:
+        return {"ip": str(ip), "public": False, "provider": "", "asn": "", "prefix": ""}
+    with ripe_cache_lock:
+        cached = ripe_cache.get(str(ip))
+        if cached and time.time() - cached[0] < 86400:
+            return cached[1]
+    result = {"ip": str(ip), "public": True, "provider": "", "asn": "", "prefix": ""}
+    try:
+        query = urllib.parse.urlencode({"resource": str(ip)})
+        with urllib.request.urlopen(f"https://stat.ripe.net/data/network-info/data.json?{query}", timeout=5) as response:
+            network = json.load(response).get("data", {})
+        asns = network.get("asns") or []
+        result["prefix"] = str(network.get("prefix") or "")
+        if asns:
+            result["asn"] = f"AS{asns[0]}"
+            as_query = urllib.parse.urlencode({"resource": result["asn"]})
+            with urllib.request.urlopen(f"https://stat.ripe.net/data/as-overview/data.json?{as_query}", timeout=5) as response:
+                overview = json.load(response).get("data", {})
+            result["provider"] = str(overview.get("holder") or "").strip()
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        pass
+    with ripe_cache_lock:
+        ripe_cache[str(ip)] = (time.time(), result)
+    return result
 
 
 def live_paths():
@@ -814,7 +864,9 @@ def agent(endpoint: str, request: Request):
         params = connection.execute("SELECT path,value,updated_at FROM parameters WHERE endpoint_id=? ORDER BY path LIMIT 10000", (endpoint,)).fetchall()
         jobs = connection.execute("SELECT * FROM jobs WHERE endpoint_id=? ORDER BY id DESC LIMIT 100", (endpoint,)).fetchall()
         events = connection.execute("SELECT * FROM events WHERE endpoint_id=? ORDER BY id DESC LIMIT 100", (endpoint,)).fetchall()
-    return {"agent": dict(row), "parameters": [dict(x) for x in params], "jobs": [dict(x) for x in jobs], "events": [dict(x) for x in events]}
+    parameter_values = [dict(x) for x in params]
+    network = ripe_network_info(wan_ip_from_parameters(parameter_values))
+    return {"agent": dict(row), "parameters": parameter_values, "jobs": [dict(x) for x in jobs], "events": [dict(x) for x in events], "network": network}
 
 
 @app.get("/api/agents/{endpoint}/history")

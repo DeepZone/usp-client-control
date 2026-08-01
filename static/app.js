@@ -272,7 +272,7 @@ scheduleLiveRender=function(){if(state.renderTimer)return;state.renderTimer=setT
 
 function deviceMemoryPercent(){const total=pnum('Device.DeviceInfo.MemoryStatus.Total'),free=pnum('Device.DeviceInfo.MemoryStatus.Free');return total>0&&free!=null?Math.max(0,Math.min(100,Math.round((total-free)/total*100))):null}
 function deviceWanIp(){const direct=pvFirst(['Device.IP.Interface.1.IPv4Address.1.IPAddress','Device.IP.Interface.1.IPv6Address.1.IPAddress'],'');if(direct)return direct;const row=state.agent.parameters.find(item=>/^Device\.IP\.Interface\.(?!1000\.)\d+\.IPv[46]Address\.\d+\.IPAddress$/.test(item.path)&&item.value&&!['0.0.0.0','::'].includes(String(item.value)));return row?.value||'–'}
-function deviceProvider(){return pvFirst(['Device.Cellular.Interface.1.X_AVM-DE_Provider','Device.Cellular.Interface.1.X_AVM_DE_Provider','Device.WAN.X_AVM-DE_Provider'],accessType())}
+function deviceProvider(){return pvFirst(['Device.Cellular.Interface.1.X_AVM-DE_Provider','Device.Cellular.Interface.1.X_AVM_DE_Provider','Device.WAN.X_AVM-DE_Provider'],state.agent?.network?.provider||(state.agent?.network?.asn?state.agent.network.asn:accessType()))}
 function resourceMeter(label,value,kind){const shown=value==null?'–':`${value}%`,level=value==null?'unknown':cpuLevel(value);return`<div class="resource-row"><div class="resource-label"><small>${label}</small><strong data-resource-value="${kind}">${shown}</strong></div><div class="cpu-meter ${level}" data-resource-meter="${kind}" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${value??0}"><span style="width:${value??0}%"></span></div></div>`}
 
 renderAgentShell=function(){

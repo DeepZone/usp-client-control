@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.4-beta] – 2026-08-02
+
+### Geändert
+
+- Provider-Fallback über die öffentliche WAN-IP und RIPEstat ergänzt
+- ASN- und Providerabfragen werden serverseitig für 24 Stunden zwischengespeichert
+- private, lokale und CGNAT-Adressen werden nicht an RIPEstat übermittelt
+
 ## [0.9.3-beta] – 2026-08-02
 
 ### Geändert
