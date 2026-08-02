@@ -7,6 +7,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.14.1-beta] – 2026-08-02
+
+### Behoben
+
+- Menüpunkt „Interface“ in die tatsächlich aktive, erweiterte Gerätenavigation aufgenommen
+
 ## [0.14.0-beta] – 2026-08-02
 
 ### Hinzugefügt
