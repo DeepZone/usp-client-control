@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.5-beta] – 2026-08-02
+
+### Geändert
+
+- Clientdetails der Cable-Box öffnen jetzt als mittig zentriertes Popup
+- seitlich bildschirmfüllende Cable-Detailansicht durch einen begrenzten, scrollbar bleibenden Dialog ersetzt
+- responsive Popup-Darstellung für kleinere Bildschirme
+
 ## [0.12.4-beta] – 2026-08-02
 
 ### Geändert
