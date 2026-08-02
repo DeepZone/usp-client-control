@@ -7,6 +7,15 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.5-beta] – 2026-08-02
+
+### Geändert
+
+- Infoboxen und Bereichskarten verwenden abhängig von ihrer Anzahl automatisch eine bis vier Spalten
+- WLAN-Radios stehen bei zwei, drei oder vier Frequenzbändern vollständig in einer gemeinsamen Reihe
+- IP-, LAN- und Heimnetz-Schnittstellen einschließlich zusätzlicher `avm-wg`-Instanzen werden bis zu vier Karten je Zeile angeordnet
+- Kartentypografie, Abstände und Detailwerte skalieren platzabhängig und halten zusammengehörige Angaben möglichst in einer Zeile
+
 ## [0.10.4-beta] – 2026-08-02
 
 ### Behoben
