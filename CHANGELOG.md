@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.6-beta] – 2026-08-02
+
+### Geändert
+
+- sämtliche Clientdetails öffnen über alle Access-Medien als mittiges Popup
+- einheitliche Darstellung für Cable, DSL, Fiber, Mobilfunk und Ethernet-WAN
+- rechter Seiten-Drawer auch bei vollständig zugeordneten IEEE-1905-Clients entfernt
+
 ## [0.12.5-beta] – 2026-08-02
 
 ### Geändert
