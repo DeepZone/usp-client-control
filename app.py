@@ -104,6 +104,8 @@ def initialize_database():
         CREATE INDEX IF NOT EXISTS traffic_samples_time ON traffic_samples(bucket_start,endpoint_id);
         CREATE TABLE IF NOT EXISTS model_schema(endpoint_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT '', value_type TEXT NOT NULL DEFAULT '', value_change TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_id,path,kind,name));
         CREATE INDEX IF NOT EXISTS model_schema_lookup ON model_schema(endpoint_id,kind,path);
+        CREATE TABLE IF NOT EXISTS speed_tests(id INTEGER PRIMARY KEY AUTOINCREMENT, msg_id TEXT UNIQUE NOT NULL, endpoint_id TEXT NOT NULL, direction TEXT NOT NULL, state TEXT NOT NULL, duration INTEGER NOT NULL, result_json TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY(endpoint_id) REFERENCES agents(endpoint_id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS speed_tests_lookup ON speed_tests(endpoint_id,created_at);
         """)
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
         if "display_name" not in columns:
@@ -452,8 +454,14 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
     if body_type == "response" or body_type == "error":
         state = "failed" if body_type == "error" else "complete"
         error = message.body.error.err_msg if body_type == "error" else None
+        if body_type == "response" and message.body.response.WhichOneof("resp_type") == "operate_resp":
+            # An asynchronous operation is only accepted by OPERATE_RESP. Its
+            # actual result follows later in an OperationComplete notification.
+            if any(item.WhichOneof("operation_resp") == "req_obj_path" for item in message.body.response.operate_resp.operation_results):
+                state = "running"
         with db() as connection:
-            connection.execute("UPDATE jobs SET state=?,response_json=?,error=?,completed_at=? WHERE msg_id=?", (state, json.dumps(data, ensure_ascii=False), error, now(), message.header.msg_id))
+            connection.execute("UPDATE jobs SET state=?,response_json=?,error=?,completed_at=? WHERE msg_id=?", (state, json.dumps(data, ensure_ascii=False), error, None if state == "running" else now(), message.header.msg_id))
+            connection.execute("UPDATE speed_tests SET state=?,error=?,completed_at=? WHERE msg_id=?", (state, error, None if state == "running" else now(), message.header.msg_id))
         if body_type == "response" and message.body.response.WhichOneof("resp_type") == "get_resp":
             store_get_parameters(endpoint, message.body.response.get_resp)
         elif body_type == "response" and message.body.response.WhichOneof("resp_type") == "get_supported_dm_resp":
@@ -472,6 +480,23 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
                 connection.execute("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", (endpoint, value.param_path, value.param_value, timestamp))
                 connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
             emit_live("parameter", endpoint, {"path": value.param_path, "value": value.param_value, "updated_at": timestamp})
+        elif notification_type == "oper_complete":
+            operation = notification.oper_complete
+            operation_kind = operation.WhichOneof("operation_resp")
+            operation_data = dict(operation.req_output_args.output_args) if operation_kind == "req_output_args" else {}
+            operation_error = operation.cmd_failure.err_msg if operation_kind == "cmd_failure" else None
+            operation_state = "failed" if operation_error else "complete"
+            completed = now()
+            with db() as connection:
+                connection.execute(
+                    "UPDATE jobs SET state=?,response_json=?,error=?,completed_at=? WHERE msg_id=?",
+                    (operation_state, json.dumps(data, ensure_ascii=False), operation_error, completed, operation.command_key),
+                )
+                connection.execute(
+                    "UPDATE speed_tests SET state=?,result_json=?,error=?,completed_at=? WHERE msg_id=?",
+                    (operation_state, json.dumps(operation_data, ensure_ascii=False), operation_error, completed, operation.command_key),
+                )
+            emit_live("speedtest", endpoint, {"msg_id": operation.command_key, "state": operation_state})
         if notification.send_resp and reply_topic:
             send_notify_response(endpoint, reply_topic, message.header.msg_id, notification.subscription_id, version)
 
@@ -602,6 +627,15 @@ class JobRequest(BaseModel):
 class ControllerSettings(BaseModel):
     live_paths: list[str] = Field(default_factory=list)
     genieacs_url: str = ""
+    udpst_host: str = ""
+    udpst_port: int = 25000
+    udpst_duration: int = 10
+    udpst_auth_key: str = ""
+
+
+class SpeedTestRequest(BaseModel):
+    direction: str = "download"
+    duration: int = 10
 
 
 def genieacs_devices():
@@ -926,6 +960,10 @@ def controller_settings(request: Request):
         "mqtt_connected": mqtt_connected,
         "live_paths": live_paths(),
         "genieacs_url": setting("genieacs_url", GENIEACS_DEFAULT),
+        "udpst_host": setting("udpst_host"),
+        "udpst_port": int(setting("udpst_port", "25000")),
+        "udpst_duration": int(setting("udpst_duration", "10")),
+        "udpst_auth_configured": bool(setting("udpst_auth_key")),
     }
 
 
@@ -954,6 +992,24 @@ def controller_settings_update(data: ControllerSettings, request: Request):
     except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
         raise HTTPException(400, f"GenieACS nicht erreichbar: {exc}") from exc
     save_setting("genieacs_url", genieacs_url)
+    udpst_host = data.udpst_host.strip()
+    if not udpst_host or len(udpst_host) > 253 or any(character.isspace() for character in udpst_host):
+        raise HTTPException(400, "Ungültiger UDPST-Server")
+    if not 1 <= data.udpst_port <= 65535:
+        raise HTTPException(400, "Ungültiger UDPST-Port")
+    if not 5 <= data.udpst_duration <= 30:
+        raise HTTPException(400, "Die UDPST-Testdauer muss zwischen 5 und 30 Sekunden liegen")
+    save_setting("udpst_host", udpst_host)
+    save_setting("udpst_port", data.udpst_port)
+    save_setting("udpst_duration", data.udpst_duration)
+    # An empty field means "retain" so the browser never needs to receive the
+    # existing authentication secret. A single dash explicitly removes it.
+    if data.udpst_auth_key == "-":
+        save_setting("udpst_auth_key", "")
+    elif data.udpst_auth_key:
+        if len(data.udpst_auth_key) > 32 or not re.fullmatch(r"[A-Za-z0-9.:()]+", data.udpst_auth_key):
+            raise HTTPException(400, "Der UDPST-Auth-Key enthält unzulässige Zeichen")
+        save_setting("udpst_auth_key", data.udpst_auth_key)
     audit(user["username"], "Live-Profil geändert", detail=f"{len(paths)} Pfade")
     return {"ok": True, "live_paths": paths, "genieacs_url": genieacs_url}
 
@@ -1188,15 +1244,93 @@ def create_job(endpoint: str, data: JobRequest, request: Request):
     try:
         message = build_message(data.action, data.payload)
         topic = agent_row["reply_topic"] or agent_topic(endpoint)
+        stored_payload = json.loads(json.dumps(data.payload))
+        if data.action == "operate" and isinstance(stored_payload.get("input_args"), dict) and "X_AuthKey" in stored_payload["input_args"]:
+            stored_payload["input_args"]["X_AuthKey"] = "[geschützt]"
         with db() as connection:
-            connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, data.action, json.dumps(data.payload, ensure_ascii=False), "queued", now()))
+            connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, data.action, json.dumps(stored_payload, ensure_ascii=False), "queued", now()))
         publish_message(endpoint, topic, message, agent_row["protocol_version"] or "1.3")
         with db() as connection:
             connection.execute("UPDATE jobs SET state='sent' WHERE msg_id=?", (message.header.msg_id,))
-        audit(user["username"], f"USP {data.action}", endpoint, json.dumps(data.payload, ensure_ascii=False))
+        audit(user["username"], f"USP {data.action}", endpoint, json.dumps(stored_payload, ensure_ascii=False))
         return {"ok": True, "msg_id": message.header.msg_id, "topic": topic}
     except Exception as exc:
         raise HTTPException(409, str(exc))
+
+
+@app.get("/api/agents/{endpoint}/speedtests")
+def speed_tests(endpoint: str, request: Request):
+    current_user(request)
+    with db() as connection:
+        if not connection.execute("SELECT 1 FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone():
+            raise HTTPException(404, "USP-Agent nicht gefunden")
+        supported = connection.execute(
+            "SELECT value FROM parameters WHERE endpoint_id=? AND path='Device.IP.Diagnostics.IPLayerCapacitySupported'",
+            (endpoint,),
+        ).fetchone()
+        command = connection.execute(
+            "SELECT 1 FROM model_schema WHERE endpoint_id=? AND path='Device.IP.Diagnostics.IPLayerCapacity()' AND kind='command'",
+            (endpoint,),
+        ).fetchone()
+        rows = connection.execute("SELECT * FROM speed_tests WHERE endpoint_id=? ORDER BY id DESC LIMIT 25", (endpoint,)).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["result"] = json.loads(item.pop("result_json") or "{}")
+        except json.JSONDecodeError:
+            item["result"] = {}
+        items.append(item)
+    return {
+        "supported": (str(supported["value"]).lower() in {"1", "true", "yes", "on"}) if supported else bool(command),
+        "support_known": bool(supported or command),
+        "host": setting("udpst_host"),
+        "port": int(setting("udpst_port", "25000")),
+        "default_duration": int(setting("udpst_duration", "10")),
+        "items": items,
+    }
+
+
+@app.post("/api/agents/{endpoint}/speedtests")
+def start_speed_test(endpoint: str, data: SpeedTestRequest, request: Request):
+    user = current_user(request)
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Diese Rolle besitzt ausschließlich Leserechte")
+    if data.direction not in {"download", "upload"}:
+        raise HTTPException(400, "Richtung muss Download oder Upload sein")
+    if not 5 <= data.duration <= 30:
+        raise HTTPException(400, "Die Testdauer muss zwischen 5 und 30 Sekunden liegen")
+    with db() as connection:
+        active = connection.execute("SELECT 1 FROM speed_tests WHERE endpoint_id=? AND state IN ('queued','sent','running') LIMIT 1", (endpoint,)).fetchone()
+    if active:
+        raise HTTPException(409, "Auf diesem Gerät läuft bereits ein Speedtest")
+    host = setting("udpst_host").strip()
+    if not host:
+        raise HTTPException(409, "Kein UDPST-Server konfiguriert")
+    arguments = {
+        "Role": "Receiver" if data.direction == "download" else "Sender",
+        "Host": host,
+        "Port": str(int(setting("udpst_port", "25000"))),
+        "ProtocolVersion": "Any",
+        "TestType": "Search",
+        "IPDVEnable": "true",
+        "X_TestIntervalSecs": str(data.duration),
+        "X_TestSubIntervalSecs": "1",
+    }
+    auth_key = setting("udpst_auth_key")
+    if auth_key:
+        arguments["X_AuthKey"] = auth_key
+    result = create_job(endpoint, JobRequest(action="operate", payload={
+        "command": "Device.IP.Diagnostics.IPLayerCapacity()",
+        "input_args": arguments,
+    }), request)
+    with db() as connection:
+        connection.execute(
+            "INSERT INTO speed_tests(msg_id,endpoint_id,direction,state,duration,created_at) VALUES(?,?,?,?,?,?)",
+            (result["msg_id"], endpoint, data.direction, "sent", data.duration, now()),
+        )
+    audit(user["username"], "UDPST-Speedtest gestartet", endpoint, f"{data.direction}, {data.duration} Sekunden")
+    return {"ok": True, "msg_id": result["msg_id"], "state": "sent"}
 
 
 @app.get("/api/audit")

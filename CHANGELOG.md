@@ -7,6 +7,26 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.0-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- eigener Geräte-Menüpunkt „Speedtest“ für IP-Layer-Kapazitätsmessungen nach BBF TR-471
+- Download- und Upload-Messungen über die asynchrone USP-Operation `Device.IP.Diagnostics.IPLayerCapacity()`
+- automatisch aktualisierter Laufstatus ohne Neuladen der Geräteansicht
+- Ergebnisübersicht für Kapazität, Paketverlust, Latenz und Jitter
+- skaliertes Verlaufsdiagramm für gemessene Datenrate und angebotene Last
+- Verlauf der letzten 25 Messungen je USP-Agent
+- zentrale, ausschließlich für Administratoren sichtbare UDPST-Konfiguration
+
+### Sicherheit
+
+- UDPST-Authentifizierungsschlüssel werden weder an den Browser zurückgegeben noch im Audit- oder Auftragsprotokoll offengelegt
+
+### Geändert
+
+- asynchrone USP-Operationen bleiben bis zur `OperationComplete`-Benachrichtigung im Status „Läuft“
+
 ## [0.11.6-beta] – 2026-08-02
 
 ### Hinzugefügt
