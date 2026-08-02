@@ -7,6 +7,20 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.9-beta] – 2026-08-02
+
+### Geändert
+
+- skalierbare Traffic-Telemetrie für große Agentenbestände: aktive Agenten werden gleichmäßig über einen 15-Minuten-Grundtakt verteilt statt gleichzeitig abgefragt
+- gerade betrachtete Agenten erhalten vorübergehend eine höhere Auflösung von fünf Minuten
+- Zählerdifferenzen werden sofort als kompakte Datenraten-Messpunkte verdichtet und nur acht Tage aufbewahrt
+- Gesamttraffic wird serverseitig aus den verdichteten Messpunkten aggregiert; Rohzähler müssen dafür nicht mehr über die API übertragen werden
+- fehlende oder veraltete Messungen werden nicht als Nullwerte interpretiert und erscheinen im Diagramm als Unterbrechung
+
+### Behoben
+
+- interne Traffic-Abfragen erzeugen keine Einträge mehr in der Ereignis- oder Auftragsliste
+
 ## [0.9.8-beta] – 2026-08-02
 
 ### Hinzugefügt

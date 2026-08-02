@@ -41,6 +41,10 @@ mqtt_client = None
 mqtt_connected = False
 main_loop = None
 live_clients = set()
+observed_agents = {}
+observed_agents_lock = threading.RLock()
+traffic_sample_messages = {}
+traffic_sample_messages_lock = threading.RLock()
 ripe_cache = {}
 ripe_cache_lock = threading.RLock()
 GENIEACS_DEFAULT = "http://genieacs:7557"
@@ -95,6 +99,9 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS parameter_history(id INTEGER PRIMARY KEY AUTOINCREMENT, endpoint_id TEXT NOT NULL, path TEXT NOT NULL, value TEXT, created_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS parameter_history_lookup ON parameter_history(endpoint_id,path,created_at);
+        CREATE TABLE IF NOT EXISTS traffic_counters(endpoint_id TEXT PRIMARY KEY, bytes_received INTEGER NOT NULL, bytes_sent INTEGER NOT NULL, sampled_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS traffic_samples(endpoint_id TEXT NOT NULL, bucket_start TEXT NOT NULL, down_bps REAL NOT NULL, up_bps REAL NOT NULL, PRIMARY KEY(endpoint_id,bucket_start));
+        CREATE INDEX IF NOT EXISTS traffic_samples_time ON traffic_samples(bucket_start,endpoint_id);
         CREATE TABLE IF NOT EXISTS model_schema(endpoint_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT '', value_type TEXT NOT NULL DEFAULT '', value_change TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_id,path,kind,name));
         CREATE INDEX IF NOT EXISTS model_schema_lookup ON model_schema(endpoint_id,kind,path);
         """)
@@ -107,6 +114,37 @@ def initialize_database():
         existing = connection.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
         if not existing:
             connection.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (username, passwords.hash(os.environ["ADMIN_PASSWORD"]), "admin", now()))
+
+
+def migrate_legacy_traffic():
+    with db() as connection:
+        if connection.execute("SELECT 1 FROM traffic_counters LIMIT 1").fetchone():
+            return
+        paths = ("Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent")
+        rows = connection.execute("SELECT endpoint_id,path,value,created_at FROM parameter_history WHERE path IN (?,?) ORDER BY endpoint_id,path,created_at", paths).fetchall()
+        previous, latest, buckets = {}, {}, {}
+        for row in rows:
+            key = (row["endpoint_id"], row["path"])
+            try:
+                timestamp = datetime.fromisoformat(row["created_at"]).timestamp()
+                counter = int(row["value"])
+            except (TypeError, ValueError):
+                continue
+            earlier = previous.get(key)
+            previous[key] = (timestamp, counter)
+            latest.setdefault(row["endpoint_id"], {})[row["path"]] = (timestamp, counter)
+            if not earlier or timestamp <= earlier[0] or counter < earlier[1]:
+                continue
+            bucket = datetime.fromtimestamp(int(timestamp // 60 * 60), timezone.utc).isoformat()
+            direction = "down_bps" if row["path"] == paths[0] else "up_bps"
+            buckets.setdefault((row["endpoint_id"], bucket), {})[direction] = (counter - earlier[1]) * 8 / (timestamp - earlier[0])
+        for (endpoint, bucket), rates in buckets.items():
+            connection.execute("INSERT OR IGNORE INTO traffic_samples(endpoint_id,bucket_start,down_bps,up_bps) VALUES(?,?,?,?)", (endpoint, bucket, rates.get("down_bps", 0), rates.get("up_bps", 0)))
+        for endpoint, counters in latest.items():
+            if paths[0] not in counters or paths[1] not in counters:
+                continue
+            sampled_at = datetime.fromtimestamp(max(counters[paths[0]][0], counters[paths[1]][0]), timezone.utc).isoformat()
+            connection.execute("INSERT OR IGNORE INTO traffic_counters(endpoint_id,bytes_received,bytes_sent,sampled_at) VALUES(?,?,?,?)", (endpoint, counters[paths[0]][1], counters[paths[1]][1], sampled_at))
 
 
 def setting(key, default=""):
@@ -256,11 +294,12 @@ def json_message(message):
 
 def store_get_parameters(endpoint, response):
     rows = []
+    timestamp = now()
     for requested in response.req_path_results:
         for resolved in requested.resolved_path_results:
             for name, value in resolved.result_params.items():
                 path = name if name.startswith("Device.") else resolved.resolved_path + name
-                rows.append((endpoint, path, value, now()))
+                rows.append((endpoint, path, value, timestamp))
     if rows:
         with db() as connection:
             current = {row["path"]: row["value"] for row in connection.execute("SELECT path,value FROM parameters WHERE endpoint_id=?", (endpoint,)).fetchall()}
@@ -268,7 +307,7 @@ def store_get_parameters(endpoint, response):
             metric_pattern = re.compile(r"(Usage|Utilization|Bytes(?:Received|Sent)?|Packets|Power|SNR|RSRP|RSRQ|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
             for _, path, value, updated in rows:
                 traffic_counter = path in {"Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"}
-                if (current.get(path) == value and not traffic_counter) or not metric_pattern.search(path):
+                if traffic_counter or current.get(path) == value or not metric_pattern.search(path):
                     continue
                 try:
                     float(value)
@@ -279,36 +318,81 @@ def store_get_parameters(endpoint, response):
             if history_rows:
                 connection.executemany("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", history_rows)
                 connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
+            traffic = {path: value for _, path, value, _ in rows if path in {"Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"}}
+            if len(traffic) == 2:
+                try:
+                    received = int(traffic["Device.IP.Interface.1.Stats.BytesReceived"])
+                    sent = int(traffic["Device.IP.Interface.1.Stats.BytesSent"])
+                except (TypeError, ValueError):
+                    received = sent = None
+            else:
+                received = sent = None
+            if received is not None and sent is not None:
+                previous = connection.execute("SELECT bytes_received,bytes_sent,sampled_at FROM traffic_counters WHERE endpoint_id=?", (endpoint,)).fetchone()
+                if previous:
+                    seconds = datetime.fromisoformat(timestamp).timestamp() - datetime.fromisoformat(previous["sampled_at"]).timestamp()
+                    if seconds > 0 and received >= previous["bytes_received"] and sent >= previous["bytes_sent"]:
+                        down_bps = (received - previous["bytes_received"]) * 8 / seconds
+                        up_bps = (sent - previous["bytes_sent"]) * 8 / seconds
+                        bucket = datetime.fromtimestamp(int(datetime.fromisoformat(timestamp).timestamp() // 60 * 60), timezone.utc).isoformat()
+                        connection.execute("INSERT INTO traffic_samples(endpoint_id,bucket_start,down_bps,up_bps) VALUES(?,?,?,?) ON CONFLICT(endpoint_id,bucket_start) DO UPDATE SET down_bps=excluded.down_bps,up_bps=excluded.up_bps", (endpoint, bucket, down_bps, up_bps))
+                connection.execute("INSERT INTO traffic_counters(endpoint_id,bytes_received,bytes_sent,sampled_at) VALUES(?,?,?,?) ON CONFLICT(endpoint_id) DO UPDATE SET bytes_received=excluded.bytes_received,bytes_sent=excluded.bytes_sent,sampled_at=excluded.sampled_at", (endpoint, received, sent, timestamp))
+                connection.execute("DELETE FROM traffic_samples WHERE bucket_start < datetime('now','-8 days')")
         emit_live("parameters", endpoint, {"values": [{"path": path, "value": value, "updated_at": updated} for _, path, value, updated in rows]})
 
 
-async def traffic_sampler():
-    """Collect lightweight WAN counters for global and per-agent traffic charts."""
-    await asyncio.sleep(20)
+def agent_is_observed(endpoint):
+    with observed_agents_lock:
+        expires = observed_agents.get(endpoint, 0)
+        if expires <= time.time():
+            observed_agents.pop(endpoint, None)
+            return False
+        return True
+
+
+def observe_agent(endpoint, seconds=900):
+    with observed_agents_lock:
+        observed_agents[endpoint] = time.time() + seconds
+
+
+async def traffic_sampler(interval, observed):
+    """Spread lightweight WAN samples evenly across a fixed fleet interval."""
+    await asyncio.sleep(20 if observed else 30)
     paths = ["Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"]
     while True:
+        cycle_started = time.monotonic()
+        with traffic_sample_messages_lock:
+            expired = time.time() - 3600
+            for msg_id, created_at in list(traffic_sample_messages.items()):
+                if created_at < expired:
+                    traffic_sample_messages.pop(msg_id, None)
+        # A quiet MQTT agent may not send unsolicited messages for hours. Keep
+        # agents seen during the last day in the base rotation; a successful
+        # sample refreshes last_seen automatically.
+        cutoff = datetime.fromtimestamp(time.time() - 86400, timezone.utc).isoformat()
         try:
-            cutoff = datetime.fromtimestamp(time.time() - 600, timezone.utc).isoformat()
             with db() as connection:
-                agents = connection.execute(
-                    "SELECT endpoint_id,protocol_version,reply_topic FROM agents WHERE last_seen>=?",
-                    (cutoff,),
-                ).fetchall()
+                agents = connection.execute("SELECT endpoint_id,protocol_version,reply_topic FROM agents WHERE last_seen>=? ORDER BY endpoint_id", (cutoff,)).fetchall()
+            agents = [agent for agent in agents if agent_is_observed(agent["endpoint_id"]) is observed]
+            spacing = interval / max(1, len(agents))
             for agent in agents:
+                message = None
                 try:
                     message = build_message("get", {"paths": paths, "max_depth": 0})
-                    publish_message(
-                        agent["endpoint_id"],
-                        agent["reply_topic"] or agent_topic(agent["endpoint_id"]),
-                        message,
-                        agent["protocol_version"] or "1.3",
-                    )
-                except Exception as exc:
-                    record_event(agent["endpoint_id"], "TRAFFIC_SAMPLE_ERROR", {"error": str(exc)})
-                await asyncio.sleep(0.25)
-        except Exception as exc:
-            record_event(None, "TRAFFIC_SAMPLER_ERROR", {"error": str(exc)})
-        await asyncio.sleep(300)
+                    with traffic_sample_messages_lock:
+                        traffic_sample_messages[message.header.msg_id] = time.time()
+                    publish_message(agent["endpoint_id"], agent["reply_topic"] or agent_topic(agent["endpoint_id"]), message, agent["protocol_version"] or "1.3")
+                except Exception:
+                    if message is not None:
+                        with traffic_sample_messages_lock:
+                            traffic_sample_messages.pop(message.header.msg_id, None)
+                    pass
+                await asyncio.sleep(spacing)
+        except Exception:
+            pass
+        remaining = interval - (time.monotonic() - cycle_started)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 def store_supported_model(endpoint, response):
@@ -357,7 +441,14 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
     body_type = message.body.WhichOneof("msg_body")
     msg_type = usp.Header.MsgType.Name(message.header.msg_type)
     data = json_message(message)
-    record_event(endpoint, msg_type, data)
+    with traffic_sample_messages_lock:
+        internal_traffic_sample = traffic_sample_messages.pop(message.header.msg_id, None) is not None
+    tracked_response = True
+    if body_type in {"response", "error"}:
+        with db() as connection:
+            tracked_response = connection.execute("SELECT 1 FROM jobs WHERE msg_id=?", (message.header.msg_id,)).fetchone() is not None
+    if not internal_traffic_sample and (body_type not in {"response", "error"} or tracked_response):
+        record_event(endpoint, msg_type, data)
     if body_type == "response" or body_type == "error":
         state = "failed" if body_type == "error" else "complete"
         error = message.body.error.err_msg if body_type == "error" else None
@@ -588,8 +679,10 @@ async def startup():
     global main_loop
     main_loop = asyncio.get_running_loop()
     initialize_database()
+    migrate_legacy_traffic()
     start_mqtt()
-    asyncio.create_task(traffic_sampler())
+    asyncio.create_task(traffic_sampler(900, False))
+    asyncio.create_task(traffic_sampler(300, True))
 
 
 @app.get("/")
@@ -890,41 +983,39 @@ def dashboard(request: Request):
 def traffic_history(request: Request, hours: int = 24, endpoint: str = ""):
     current_user(request)
     hours = min(max(hours, 1), 168)
-    cutoff = datetime.fromtimestamp(time.time() - hours * 3600, timezone.utc).isoformat()
-    paths = ("Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent")
-    query = "SELECT endpoint_id,path,value,created_at FROM parameter_history WHERE created_at>=? AND path IN (?,?)"
-    values = [cutoff, *paths]
+    cutoff_timestamp = time.time() - hours * 3600
+    cutoff = datetime.fromtimestamp(cutoff_timestamp, timezone.utc).isoformat()
+    query = "SELECT endpoint_id,bucket_start,down_bps,up_bps FROM traffic_samples WHERE bucket_start>=?"
+    values = [cutoff]
     if endpoint:
         query += " AND endpoint_id=?"
         values.append(endpoint)
-    query += " ORDER BY endpoint_id,path,created_at"
+    query += " ORDER BY endpoint_id,bucket_start"
     with db() as connection:
         rows = connection.execute(query, values).fetchall()
-    bucket_seconds = 60 if hours <= 24 else 900
-    previous = {}
-    buckets = {}
+    series = {}
     for row in rows:
-        key = (row["endpoint_id"], row["path"])
-        try:
-            timestamp = datetime.fromisoformat(row["created_at"]).timestamp()
-            counter = int(row["value"])
-        except (TypeError, ValueError):
-            continue
-        earlier = previous.get(key)
-        previous[key] = (timestamp, counter)
-        if not earlier or timestamp <= earlier[0] or counter < earlier[1]:
-            continue
-        rate = (counter - earlier[1]) * 8 / (timestamp - earlier[0])
-        bucket = int(timestamp // bucket_seconds * bucket_seconds)
-        direction = "down_bps" if row["path"] == paths[0] else "up_bps"
-        values_by_agent = buckets.setdefault(bucket, {}).setdefault(row["endpoint_id"], {})
-        values_by_agent[direction] = rate
+        series.setdefault(row["endpoint_id"], []).append((datetime.fromisoformat(row["bucket_start"]).timestamp(), row["down_bps"], row["up_bps"]))
+    step = 60 if hours <= 1 else 300 if hours <= 24 else 900
+    start = int(cutoff_timestamp // step * step)
+    end = int(time.time() // step * step)
+    cursors = {agent: -1 for agent in series}
     points = []
-    for timestamp, agents in sorted(buckets.items()):
-        down = sum(values.get("down_bps", 0) for values in agents.values())
-        up = sum(values.get("up_bps", 0) for values in agents.values())
-        points.append({"time": datetime.fromtimestamp(timestamp, timezone.utc).isoformat(), "down_bps": round(down), "up_bps": round(up)})
-    return {"hours": hours, "scope": endpoint or "all", "points": points}
+    for timestamp in range(start, end + 1, step):
+        down = up = 0
+        coverage = 0
+        for agent, samples in series.items():
+            cursor = cursors[agent]
+            while cursor + 1 < len(samples) and samples[cursor + 1][0] <= timestamp:
+                cursor += 1
+            cursors[agent] = cursor
+            if cursor >= 0 and timestamp - samples[cursor][0] <= 1800:
+                down += samples[cursor][1]
+                up += samples[cursor][2]
+                coverage += 1
+        if coverage:
+            points.append({"time": datetime.fromtimestamp(timestamp, timezone.utc).isoformat(), "down_bps": round(down), "up_bps": round(up), "coverage": coverage})
+    return {"hours": hours, "scope": endpoint or "all", "points": points, "agents": len(series)}
 
 
 @app.get("/api/agents")
@@ -941,6 +1032,7 @@ def agents(request: Request):
 @app.get("/api/agents/{endpoint}")
 def agent(endpoint: str, request: Request):
     current_user(request)
+    observe_agent(endpoint)
     with db() as connection:
         row = connection.execute("SELECT * FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
         if not row:
