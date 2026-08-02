@@ -7,6 +7,15 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.5-beta] – 2026-08-02
+
+### Geändert
+
+- Gerätedienste und BulkData-Messdatenexport in „USP & MQTT“ integriert
+- separaten Menüpunkt „Dienste“ zugunsten einer schlankeren Gerätenavigation entfernt
+- USP-, MQTT- und Dienstefunktionen in einer gemeinsamen, durchsuchbaren Funktionsansicht zusammengeführt
+- Abruf und dynamische Aktualisierung der Gerätedienste bleiben vollständig erhalten
+
 ## [0.11.4-beta] – 2026-08-02
 
 ### Hinzugefügt
