@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.15.3-beta] – 2026-08-02
+
+### Behoben
+
+- RSSI in die serverseitige Historienerfassung aufgenommen
+- RSRP, RSRQ und RSSI werden bei jeder Messabfrage auch bei unverändertem Wert als echter Messpunkt gespeichert
+- aktuelle RSSI-Messung erscheint sofort im Diagramm; bis zum zweiten Messpunkt mit Kennzeichnung „noch keine Historie“
+
 ## [0.15.2-beta] – 2026-08-02
 
 ### Geändert
