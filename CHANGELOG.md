@@ -7,6 +7,18 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.3-beta] – 2026-08-02
+
+### Geändert
+
+- einheitliche Heimnetz-Client-Detailansicht für Cable, DSL, Fiber und Mobilfunk
+- auch Clients ohne vollständige IEEE-1905-Zuordnung öffnen die normale Live-Detailansicht
+- fehlende Qualitätsmesswerte werden neutral als „Keine Messwerte“ dargestellt
+
+### Behoben
+
+- abweichender kompakter Dialog für einzelne Clients der Cable-Box entfernt
+
 ## [0.12.2-beta] – 2026-08-02
 
 ### Behoben
