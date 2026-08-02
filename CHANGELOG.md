@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.4-beta] – 2026-08-02
+
+### Geändert
+
+- FRITZ!Box selbst wird nicht mehr zusätzlich als Heimnetz-Client aufgeführt
+- Mesh-Komponenten wie FRITZ!Smart Gateway, Repeater und Powerline-Geräte sind anklickbar
+- Mesh-Komponenten öffnen über ihre Host-Zuordnung die einheitliche Live-Detailansicht
+
 ## [0.12.3-beta] – 2026-08-02
 
 ### Geändert
