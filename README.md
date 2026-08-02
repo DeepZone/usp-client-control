@@ -57,7 +57,7 @@ flowchart LR
     M --> C["USP Control"]
     U["Administrator / Support"] -->|"interne Web-GUI"| C
     C --> D[("SQLite-Datenvolume")]
-    C -.->|"optional · Kundennummer"| G["GenieACS NBI"]
+    C -.->|"optional"| G["GenieACS NBI"]
 ```
 
 Der Docker-Stack enthält den Controller, die Weboberfläche, den persistenten Statusspeicher und Eclipse Mosquitto. Die Proto-Klassen werden beim Image-Build aus den mitgelieferten Broadband-Forum-Definitionen erzeugt.
