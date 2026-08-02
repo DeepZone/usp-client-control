@@ -7,6 +7,20 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.13.1-beta] – 2026-08-02
+
+### Geändert
+
+- eigene FRITZ!-inspirierte SVG-Gerätesymbole anhand der offiziellen Produktformen
+- separate Silhouetten für FRITZ!Box, hohe und kompakte FRITZ!Repeater, FRITZ!Powerline und FRITZ!Smart Gateway
+- automatische Symbolauswahl anhand des über USP gemeldeten Modellnamens
+- einheitlicher weiß-roter Hardware-Look mit Status-LEDs, Gehäuseschatten und gerätespezifischen Details
+
+### Rechtliches
+
+- keine fremden Produktfotos oder AVM-Markengrafiken in das öffentliche Repository übernommen
+- Symbole sind eigenständige, reduzierte SVG-Illustrationen ohne eingebettete FRITZ!-/AVM-Logos
+
 ## [0.13.0-beta] – 2026-08-02
 
 ### Geändert
