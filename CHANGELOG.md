@@ -7,6 +7,15 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.1-beta] – 2026-08-02
+
+### Geändert
+
+- WLAN-Seite konsequent auf Radios, Frequenzbänder, Kanäle, Sendeleistung, Auslastung, SSIDs und Sicherheit reduziert
+- WLAN-Client-Heatmap und sämtliche clientspezifischen Verbindungsdetails in den Bereich „Heimnetz“ verschoben
+- modellabhängige FRITZ!-Gerätesymbole für FRITZ!Box, Smart Gateway, Repeater und Powerline in der Mesh-Topologie ergänzt
+- clientspezifische Access-Point-Rohwerte werden nicht mehr auf der WLAN-Seite wiederholt
+
 ## [0.10.0-beta] – 2026-08-02
 
 ### Hinzugefügt
