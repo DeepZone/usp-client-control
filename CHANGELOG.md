@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.4-beta] – 2026-08-02
+
+### Behoben
+
+- Agenten-Trafficgrafik bleibt nicht mehr bei „Traffic-Verlauf wird geladen …“ stehen
+- Live-Differenzaktualisierungen lassen bereits geladene Diagramme und deren Zeitraumwahl unverändert
+- Antworten veralteter Traffic-Abfragen können keine inzwischen entfernten Vergleichselemente mehr aktualisieren
+
 ## [0.10.3-beta] – 2026-08-02
 
 ### Geändert
