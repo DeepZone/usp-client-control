@@ -7,6 +7,24 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.13.0-beta] – 2026-08-02
+
+### Geändert
+
+- PHY-Rate verständlich als „Maximal möglich“ und MAC-Kapazität als „Aktuell ausgehandelt“ benannt
+- absolute Geschwindigkeitsgrenzen durch eine relative Bewertung gegenüber der PHY-Obergrenze ersetzt
+- PHY-Ausnutzung getrennt nach Up- und Downstream ermittelt; die schwächere Richtung bestimmt den Effizienzwert
+- WLAN-Qualität kombiniert PHY-Ausnutzung, RSSI/RCPI, Link-Verfügbarkeit, Kanalauslastung und Latenz
+- fehlende Einzelmetriken führen nicht mehr automatisch zu einer Abwertung; vorhandene Komponenten werden gewichtsnormiert
+
+### Gewichtung
+
+- 40 % aktuell ausgehandelte MAC-Kapazität relativ zum PHY-Maximum
+- 25 % WLAN-Signal aus RCPI beziehungsweise RSSI
+- 15 % Link-Verfügbarkeit
+- 10 % Kanalauslastung
+- 10 % Latenz
+
 ## [0.12.6-beta] – 2026-08-02
 
 ### Geändert
