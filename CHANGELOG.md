@@ -7,6 +7,18 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.3-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- gezielter USP-Abruf der vollständigen Telefoniestruktur einschließlich Rufnummern, SIP-Netzen, DECT-Basen und Mobilteilen
+- automatischer Erstabruf, wenn die Telefonieseite eines Agenten noch keine `VoiceService`-Daten enthält
+- manueller, jederzeit wiederholbarer Abruf über „Telefoniedaten abrufen“
+
+### Geändert
+
+- leere Telefoniebereiche unterscheiden jetzt verständlich zwischen „nicht eingerichtet“ und „noch nicht vom Gerät empfangen“
+
 ## [0.11.2-beta] – 2026-08-02
 
 ### Geändert
