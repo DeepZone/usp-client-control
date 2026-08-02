@@ -3,8 +3,8 @@
   <h1>USP Control</h1>
   <p><strong>Deutschsprachiger USP-Controller mit moderner TR-369-GUI, MQTT-5-Transport und Live-Geräteansichten.</strong></p>
   <p>
-    <img alt="Version 0.11.6 Beta" src="https://img.shields.io/badge/Version-0.11.6--beta-087f8c">
-    <img alt="Status: aktive Entwicklung" src="https://img.shields.io/badge/Status-aktive_Entwicklung-d97706">
+    <img alt="Version 1.0.0" src="https://img.shields.io/badge/Version-1.0.0-087f8c">
+    <img alt="Status: Release-Kandidat" src="https://img.shields.io/badge/Status-Release--Kandidat-d97706">
     <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776ab?logo=python&logoColor=white">
     <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white">
     <img alt="USP TR-369" src="https://img.shields.io/badge/USP-TR--369-0d9488">
@@ -15,9 +15,9 @@
 
 **USP Control ist ein eigenständiger USP-/TR-369-Controller mit Web-GUI für die zentrale Verwaltung kompatibler CPEs.** Der Controller verarbeitet standardkonforme USP Records und Messages über MQTT 5, speichert gemeldete Parameter und bereitet technische Gerätedaten für Service und Support übersichtlich auf.
 
-Der Schwerpunkt liegt derzeit auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet-WAN**. Anschlusswerte, Systemzustand, LAN, WLAN, Clients und vorhandene Spektraldaten werden nicht nur als Rohdaten ausgegeben, sondern in fachlichen Ansichten, Diagrammen, Qualitätsanzeigen und Live-Verläufen dargestellt.
+Der Schwerpunkt liegt auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet-WAN**. Anschlusswerte, Systemzustand, LAN, WLAN, Clients und vorhandene Spektraldaten erscheinen ausschließlich in fachlich aufbereiteten Ansichten, Diagrammen, Qualitätsanzeigen und Live-Verläufen. Reine Parameterdumps werden in der Bedienoberfläche nicht angezeigt.
 
-> **Projektstatus: öffentliche Beta, aktiv in Entwicklung.** Die Kernfunktionen arbeiten bereits in einer realen Testumgebung. Wegen modellabhängiger USP-Pfade, unterschiedlicher FRITZ!OS-Freigaben und noch laufender Kompatibilitätstests ist diese Version nicht für einen unbeaufsichtigten Produktivbetrieb freigegeben.
+> **Projektstatus: Release-Kandidat für Version 1.0.0.** Die Kernfunktionen arbeiten in einer realen Testumgebung. Modellabhängige USP-Pfade, unterschiedliche FRITZ!OS-Freigaben und Providerprofile müssen vor einem produktiven Rollout weiterhin mit den vorgesehenen Gerätemodellen validiert werden.
 
 Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 
@@ -36,9 +36,9 @@ Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 | **Live-Daten** | dynamische Aktualisierung ohne kompletten Seitenneuaufbau, Parameterhistorie und aktuelle Systemwerte |
 | **Anschlussqualität** | aufbereitete Cable-, DSL-, Mobile-, Fiber- und Ethernet-WAN-Werte mit Qualitätsbewertung |
 | **Spektren & Pegel** | FRITZ!-ähnliche Diagramme für verfügbare DSL-, DOCSIS-, Mobilfunk- und optische Messwerte |
-| **WLAN & LAN** | Radios, SSIDs, Kanäle, Clients, Heatmap, Signalqualität, Traffic, Ethernet-Ports und Heimnetzgeräte |
+| **WLAN & LAN** | Radios, SSIDs, Kanäle, Clients, Signalqualität, Traffic, Ethernet-Ports, Mesh-Topologie und Heimnetzgeräte |
 | **System** | Geräteidentität, Firmware, Uptime, CPU, Speicher, Prozesse und weitere gemeldete Betriebswerte |
-| **Datenmodell** | vollständige Modellansicht, Suche, Zugriffstypen, Datentypen und sichere Bearbeitung schreibbarer Werte |
+| **Datenmodell** | schemaabhängige Funktionszuordnung, sichere Bearbeitung schreibbarer Werte und gezielte USP-Aktionen ohne Rohdatenansicht |
 | **Benutzer** | Administrator-, Operator- und Viewer-Rolle, eigenes Profil, Kennwortwechsel und Audit-Protokoll |
 | **Branding** | USP-Client-Control-Logo, NoiSens-Standardlogo und eigenes Unternehmenslogo per Admin-Konfiguration |
 | **GenieACS** | optionale, konfigurierbare Zuordnung von Kundennummern aus einer vorhandenen GenieACS-Installation |

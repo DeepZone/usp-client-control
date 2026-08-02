@@ -4,8 +4,25 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
-- Weitere Aufbereitung des vollständigen USP-Datenmodells
-- Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
+## [1.0.0] – 2026-08-02
+
+### Hinzugefügt
+
+- einheitlicher „Aktualisieren“-Button auf jeder Geräteseite
+- fachlich aufbereitete WAN-Fallbackansicht für Geräte ohne klassifiziertes Zugangsmedium
+
+### Geändert
+
+- Release-Status, sichtbare Versionsangaben und Browser-Asset-Version auf 1.0.0 aktualisiert
+- technische USP-Werte bleiben intern vollständig verfügbar, erscheinen aber nur noch in zugeordneten Funktionsansichten
+- USP & MQTT vollständig als Controller-, Broker-, Subscription- und Diensteübersicht aufbereitet
+
+### Entfernt
+
+- reine „Expertenansicht“ mit vollständigen USP-Parameterlisten aus dem Gerätemenü
+- ausklappbarer USP-Komplettdump und sichtbare interne USP-Pfade aus den Clientdetails
+- rohe Parameterpfad-Tabelle aus der allgemeinen WAN-Anschlussansicht
+- generische Rohdatenblöcke aus System, WLAN, Internet & IP sowie USP & MQTT
 
 ## [0.15.5-beta] – 2026-08-02
 
