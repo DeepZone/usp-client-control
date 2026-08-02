@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.1-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- Schaltfläche „Speedtest-Fähigkeit prüfen“ direkt auf der Speedtestseite
+- gezielter Abruf von Unterstützungswert und Diagnose-Command-Schema
+- automatische Aktualisierung der Fähigkeitsanzeige nach der Geräteantwort
+
 ## [0.12.0-beta] – 2026-08-02
 
 ### Hinzugefügt
@@ -18,6 +26,7 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - skaliertes Verlaufsdiagramm für gemessene Datenrate und angebotene Last
 - Verlauf der letzten 25 Messungen je USP-Agent
 - zentrale, ausschließlich für Administratoren sichtbare UDPST-Konfiguration
+- gezielte Synchronisierung der Speedtest-Fähigkeit direkt auf der Speedtestseite
 
 ### Sicherheit
 
