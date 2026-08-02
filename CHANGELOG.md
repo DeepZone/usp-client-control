@@ -7,6 +7,13 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.15.4-beta] – 2026-08-02
+
+### Geändert
+
+- Bereich „Weitere Anschlussfunktionen“ vollständig aus allen Anschlussansichten entfernt
+- „Unterstützte Mobilfunkbänder“ ans Ende der Mobilfunk-Anschlussseite verschoben
+
 ## [0.15.3-beta] – 2026-08-02
 
 ### Behoben
