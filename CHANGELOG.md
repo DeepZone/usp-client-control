@@ -7,6 +7,23 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.0-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- eigener Gerätebereich „Telefonie & DECT“
+- aufbereitete SIP-Konten mit Registrierung, Rufnummer beziehungsweise URI, Benutzer und Netzzuordnung
+- SIP-Netze mit Registrar, Proxy, Outbound-Proxy, Ports und STUN-Status
+- DECT-Basen mit Aktivierung, Standard, RFPI, Kapazität und Repeater-Unterstützung
+- DECT-Mobilteile mit Name, Modell, Hersteller, Firmware, Basiszuordnung, IPUI und Codecs
+
+### Geändert
+
+- „Internet & IP“ als übersichtliche Betriebsseite mit IP-Schnittstellen, Adressen, Traffic, Fehlern, Geschwindigkeiten, PPP, DHCP und DNS neu gestaltet
+- `avm-wg` wird verständlich als WireGuard-Schnittstelle gekennzeichnet
+- „Dienste“ erhält eine kompakte Statusübersicht und getrennte, weiterhin bedienbare Detailgruppen
+- schreibbare SIP-, DECT- und IP-Einstellungen sind rollenabhängig direkt aus den aufbereiteten Ansichten erreichbar
+
 ## [0.10.5-beta] – 2026-08-02
 
 ### Geändert
