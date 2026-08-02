@@ -3,8 +3,8 @@
   <h1>USP Control</h1>
   <p><strong>Deutschsprachiger USP-Controller mit moderner TR-369-GUI, MQTT-5-Transport und Live-Geräteansichten.</strong></p>
   <p>
-    <img alt="Version 1.0.0" src="https://img.shields.io/badge/Version-1.0.0-087f8c">
-    <img alt="Status: Release-Kandidat" src="https://img.shields.io/badge/Status-Release--Kandidat-d97706">
+    <img alt="Version 1.0.1" src="https://img.shields.io/badge/Version-1.0.1-087f8c">
+    <img alt="Status: stabile Version" src="https://img.shields.io/badge/Status-stabile_Version-2da66f">
     <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776ab?logo=python&logoColor=white">
     <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white">
     <img alt="USP TR-369" src="https://img.shields.io/badge/USP-TR--369-0d9488">
@@ -17,7 +17,7 @@
 
 Der Schwerpunkt liegt auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet-WAN**. Anschlusswerte, Systemzustand, LAN, WLAN, Clients und vorhandene Spektraldaten erscheinen ausschließlich in fachlich aufbereiteten Ansichten, Diagrammen, Qualitätsanzeigen und Live-Verläufen. Reine Parameterdumps werden in der Bedienoberfläche nicht angezeigt.
 
-> **Projektstatus: Release-Kandidat für Version 1.0.0.** Die Kernfunktionen arbeiten in einer realen Testumgebung. Modellabhängige USP-Pfade, unterschiedliche FRITZ!OS-Freigaben und Providerprofile müssen vor einem produktiven Rollout weiterhin mit den vorgesehenen Gerätemodellen validiert werden.
+> **Projektstatus: stabile Version 1.0.1.** Die Kernfunktionen arbeiten in einer realen Testumgebung. Modellabhängige USP-Pfade, unterschiedliche FRITZ!OS-Freigaben und Providerprofile sollten vor einem breiten Rollout weiterhin mit den vorgesehenen Gerätemodellen validiert werden.
 
 Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 

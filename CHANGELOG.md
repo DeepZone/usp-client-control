@@ -4,7 +4,7 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
-## [1.0.0] – 2026-08-02
+## [1.0.1] – 2026-08-02
 
 ### Hinzugefügt
 
@@ -13,7 +13,7 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ### Geändert
 
-- Release-Status, sichtbare Versionsangaben und Browser-Asset-Version auf 1.0.0 aktualisiert
+- Release-Status, sichtbare Versionsangaben und Browser-Asset-Version auf 1.0.1 aktualisiert
 - technische USP-Werte bleiben intern vollständig verfügbar, erscheinen aber nur noch in zugeordneten Funktionsansichten
 - USP & MQTT vollständig als Controller-, Broker-, Subscription- und Diensteübersicht aufbereitet
 
