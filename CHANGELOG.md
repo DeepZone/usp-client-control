@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.1-beta] – 2026-08-02
+
+### Geändert
+
+- Infoboxen und Bereichskarten auf maximal drei Spalten begrenzt
+- einzelne Karten in einer Restzeile nutzen automatisch die gesamte verfügbare Breite
+- zwei Karten in einer Restzeile teilen sich die gesamte Breite gleichmäßig
+
 ## [0.11.0-beta] – 2026-08-02
 
 ### Hinzugefügt
