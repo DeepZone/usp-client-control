@@ -7,6 +7,15 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.15.2-beta] – 2026-08-02
+
+### Geändert
+
+- RSRP, RSSI und RSRQ wieder in einem gemeinsamen Mobilfunkdiagramm im FRITZ!-Stil dargestellt
+- getrennte linke und rechte Y-Achse für Empfangspegel und Signalqualität verhindert verzerrte Linienlagen
+- kontrastreiche Linien in Blau, Grün und Orange mit stärkerer Abhebung vom Diagrammhintergrund
+- Zeitraum wählbar zwischen 1 Stunde, 6 Stunden, 24 Stunden und 7 Tagen; Standard bleibt 24 Stunden
+
 ## [0.15.1-beta] – 2026-08-02
 
 ### Geändert
