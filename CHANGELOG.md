@@ -7,6 +7,16 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.15.0-beta] – 2026-08-02
+
+### Geändert
+
+- Menüpunkt und Seitentitel in die Mehrzahl „Interfaces“ umbenannt
+- Interface-Seite um eine kompakte Gesamttabelle für Status, Zuordnung, Adressen, Datenraten, Traffic und Fehler erweitert
+- aufklappbare Rohdaten vollständig von der Interface-Seite entfernt
+- Datenraten automatisch in bit/s, kbit/s, Mbit/s oder Gbit/s skaliert
+- vorhandene 24-Stunden-Verläufe geeigneter Interface-Messwerte direkt als ruhige Mini-Diagramme in der Tabelle dargestellt
+
 ## [0.14.2-beta] – 2026-08-02
 
 ### Geändert
