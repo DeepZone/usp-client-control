@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.15.5-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- Roaming-Status sichtbar im Bereich „SIM und Zugang“ dargestellt
+- Roaming gemäß AVM-USP-Datenmodell über `Device.Cellular.RoamingEnabled` aktivier- und deaktivierbar
+- rollenabhängige Bedienung und Sicherheitsabfrage vor jedem USP-SET
+
 ## [0.15.4-beta] – 2026-08-02
 
 ### Geändert
