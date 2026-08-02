@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.12.2-beta] – 2026-08-02
+
+### Behoben
+
+- Speedtests bleiben nach einem MQTT- oder WAN-Verbindungsabbruch nicht dauerhaft im Status „Läuft“
+- verwaiste asynchrone Tests erhalten nach 90 Sekunden eine verständliche Zeitüberschreitungsdiagnose
+- nach einem unterbrochenen Test kann anschließend wieder eine neue Messung gestartet werden
+
 ## [0.12.1-beta] – 2026-08-02
 
 ### Hinzugefügt

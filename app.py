@@ -1272,6 +1272,21 @@ def speed_tests(endpoint: str, request: Request):
             "SELECT 1 FROM model_schema WHERE endpoint_id=? AND path='Device.IP.Diagnostics.IPLayerCapacity()' AND kind='command'",
             (endpoint,),
         ).fetchone()
+        # An Agent can lose its MQTT session while an asynchronous diagnostic
+        # is running (for example during a PPPoE reconnect). In that case no
+        # OperationComplete can arrive. Expire the orphan instead of blocking
+        # all future tests forever.
+        stale_before = datetime.fromtimestamp(time.time() - 90, timezone.utc).isoformat()
+        stale = connection.execute(
+            "SELECT msg_id FROM speed_tests WHERE endpoint_id=? AND state IN ('queued','sent','running') AND created_at<?",
+            (endpoint, stale_before),
+        ).fetchall()
+        if stale:
+            timeout_error = "Keine Abschlussmeldung vom USP-Agenten – Verbindung während des Tests möglicherweise unterbrochen"
+            completed = now()
+            for item in stale:
+                connection.execute("UPDATE speed_tests SET state='failed',error=?,completed_at=? WHERE msg_id=?", (timeout_error, completed, item["msg_id"]))
+                connection.execute("UPDATE jobs SET state='failed',error=?,completed_at=? WHERE msg_id=?", (timeout_error, completed, item["msg_id"]))
         rows = connection.execute("SELECT * FROM speed_tests WHERE endpoint_id=? ORDER BY id DESC LIMIT 25", (endpoint,)).fetchall()
     items = []
     for row in rows:
