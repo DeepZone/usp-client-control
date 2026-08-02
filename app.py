@@ -265,9 +265,10 @@ def store_get_parameters(endpoint, response):
         with db() as connection:
             current = {row["path"]: row["value"] for row in connection.execute("SELECT path,value FROM parameters WHERE endpoint_id=?", (endpoint,)).fetchall()}
             history_rows = []
-            metric_pattern = re.compile(r"(Usage|Utilization|Bytes|Packets|Power|SNR|RSRP|RSRQ|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
+            metric_pattern = re.compile(r"(Usage|Utilization|Bytes(?:Received|Sent)?|Packets|Power|SNR|RSRP|RSRQ|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
             for _, path, value, updated in rows:
-                if current.get(path) == value or not metric_pattern.search(path):
+                traffic_counter = path in {"Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"}
+                if (current.get(path) == value and not traffic_counter) or not metric_pattern.search(path):
                     continue
                 try:
                     float(value)
@@ -279,6 +280,35 @@ def store_get_parameters(endpoint, response):
                 connection.executemany("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", history_rows)
                 connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
         emit_live("parameters", endpoint, {"values": [{"path": path, "value": value, "updated_at": updated} for _, path, value, updated in rows]})
+
+
+async def traffic_sampler():
+    """Collect lightweight WAN counters for global and per-agent traffic charts."""
+    await asyncio.sleep(20)
+    paths = ["Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"]
+    while True:
+        try:
+            cutoff = datetime.fromtimestamp(time.time() - 600, timezone.utc).isoformat()
+            with db() as connection:
+                agents = connection.execute(
+                    "SELECT endpoint_id,protocol_version,reply_topic FROM agents WHERE last_seen>=?",
+                    (cutoff,),
+                ).fetchall()
+            for agent in agents:
+                try:
+                    message = build_message("get", {"paths": paths, "max_depth": 0})
+                    publish_message(
+                        agent["endpoint_id"],
+                        agent["reply_topic"] or agent_topic(agent["endpoint_id"]),
+                        message,
+                        agent["protocol_version"] or "1.3",
+                    )
+                except Exception as exc:
+                    record_event(agent["endpoint_id"], "TRAFFIC_SAMPLE_ERROR", {"error": str(exc)})
+                await asyncio.sleep(0.25)
+        except Exception as exc:
+            record_event(None, "TRAFFIC_SAMPLER_ERROR", {"error": str(exc)})
+        await asyncio.sleep(300)
 
 
 def store_supported_model(endpoint, response):
@@ -559,6 +589,7 @@ async def startup():
     main_loop = asyncio.get_running_loop()
     initialize_database()
     start_mqtt()
+    asyncio.create_task(traffic_sampler())
 
 
 @app.get("/")
@@ -853,6 +884,47 @@ def dashboard(request: Request):
         jobs = connection.execute("SELECT state,COUNT(*) count FROM jobs GROUP BY state").fetchall()
     job_counts = {row["state"]: row["count"] for row in jobs}
     return {"agents": {"total": len(rows), "online": sum(1 for row in rows if row["online"])}, "jobs": job_counts, "active_errors": job_counts.get("failed", 0), "attention": sum(1 for row in rows if row["health"] in {"Warnung", "Kritisch"}), "access": {name: sum(1 for row in rows if row["access"] == name) for name in ["Cable", "DSL", "Mobile", "Fiber", "WAN"]}, "health": {name: sum(1 for row in rows if row["health"] == name) for name in ["Gesund", "Warnung", "Kritisch", "Unbekannt"]}, "mqtt": mqtt_connected, "endpoint_id": ENDPOINT_ID}
+
+
+@app.get("/api/traffic")
+def traffic_history(request: Request, hours: int = 24, endpoint: str = ""):
+    current_user(request)
+    hours = min(max(hours, 1), 168)
+    cutoff = datetime.fromtimestamp(time.time() - hours * 3600, timezone.utc).isoformat()
+    paths = ("Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent")
+    query = "SELECT endpoint_id,path,value,created_at FROM parameter_history WHERE created_at>=? AND path IN (?,?)"
+    values = [cutoff, *paths]
+    if endpoint:
+        query += " AND endpoint_id=?"
+        values.append(endpoint)
+    query += " ORDER BY endpoint_id,path,created_at"
+    with db() as connection:
+        rows = connection.execute(query, values).fetchall()
+    bucket_seconds = 60 if hours <= 24 else 900
+    previous = {}
+    buckets = {}
+    for row in rows:
+        key = (row["endpoint_id"], row["path"])
+        try:
+            timestamp = datetime.fromisoformat(row["created_at"]).timestamp()
+            counter = int(row["value"])
+        except (TypeError, ValueError):
+            continue
+        earlier = previous.get(key)
+        previous[key] = (timestamp, counter)
+        if not earlier or timestamp <= earlier[0] or counter < earlier[1]:
+            continue
+        rate = (counter - earlier[1]) * 8 / (timestamp - earlier[0])
+        bucket = int(timestamp // bucket_seconds * bucket_seconds)
+        direction = "down_bps" if row["path"] == paths[0] else "up_bps"
+        values_by_agent = buckets.setdefault(bucket, {}).setdefault(row["endpoint_id"], {})
+        values_by_agent[direction] = rate
+    points = []
+    for timestamp, agents in sorted(buckets.items()):
+        down = sum(values.get("down_bps", 0) for values in agents.values())
+        up = sum(values.get("up_bps", 0) for values in agents.values())
+        points.append({"time": datetime.fromtimestamp(timestamp, timezone.utc).isoformat(), "down_bps": round(down), "up_bps": round(up)})
+    return {"hours": hours, "scope": endpoint or "all", "points": points}
 
 
 @app.get("/api/agents")

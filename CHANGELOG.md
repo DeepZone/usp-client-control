@@ -7,6 +7,19 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.9.8-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- Gesamttraffic-Diagramm auf der USP-Control-Übersicht mit Download und Upload
+- anschlussbezogenes Traffic-Diagramm in der Übersicht jedes USP-Agenten
+- auswählbare Zeiträume von einer Stunde bis sieben Tagen mit beschrifteter Zeit- und Datenratenachse
+- ressourcenschonende automatische Erfassung der WAN-Zähler im Fünf-Minuten-Takt
+
+### Geändert
+
+- Traffic wird aus echten Zählerdifferenzen als Datenrate berechnet; Zählerstände und künstlich gestreckte Kurven werden vermieden
+
 ## [0.9.7-beta] – 2026-08-02
 
 ### Hinzugefügt
