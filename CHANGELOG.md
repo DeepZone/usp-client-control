@@ -7,6 +7,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.14.2-beta] – 2026-08-02
+
+### Geändert
+
+- doppelten Rohdatenbereich „IP & WAN · Interface“ unter „Internet & IP“ entfernt; die aufbereitete Darstellung befindet sich im Menüpunkt „Interface“
+
 ## [0.14.1-beta] – 2026-08-02
 
 ### Behoben
