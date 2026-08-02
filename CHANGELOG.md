@@ -7,6 +7,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.2-beta] – 2026-08-02
+
+### Geändert
+
+- kompakte Kennzahlen- und Qualitätsboxen wieder mit bis zu vier Spalten dargestellt
+- ausschließlich große Inhaltskarten bleiben auf maximal drei Spalten begrenzt
+- große Restkarten nutzen weiterhin automatisch die vollständige Zeilenbreite
+
 ## [0.11.1-beta] – 2026-08-02
 
 ### Geändert
