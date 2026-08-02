@@ -7,6 +7,16 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.2-beta] – 2026-08-02
+
+### Geändert
+
+- WLAN-Client-Heatmap vollständig entfernt
+- Rohdatenabteilungen „Heimnetzgeräte · Host“, „Heimnetzgeräte · Allgemein“ und „Netzwerktopologie · AL“ von der Heimnetzseite entfernt
+- zusätzliche IEEE-1905-Werte direkt in Mesh-Knoten und Clientdetails aufbereitet: Mesh-Rolle, Geräteklasse, Softwarestand, LLDP-Erkennung, Link-Verfügbarkeit, RCPI/RSSI, Kanalauslastung und letzter Topologiestand
+- Host-Alias als weitere sinnvolle Quelle für die Gerätebezeichnung ergänzt
+- reservierte IEEE-1905-Messwerte wie `255` werden als „nicht gemeldet“ behandelt
+
 ## [0.10.1-beta] – 2026-08-02
 
 ### Geändert

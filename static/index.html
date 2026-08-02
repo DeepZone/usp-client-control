@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USP Control</title>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/professional.css?v=0.10.1">
+  <link rel="stylesheet" href="/static/professional.css?v=0.10.2">
 </head>
 <body>
   <section id="login" class="login-shell">
@@ -13,7 +13,7 @@
       <img class="product-logo login-logo" src="/static/branding/usp-client-control-logo.png?v=0.9.1" width="64" height="64" alt="USP Client Control">
       <h1>USP Client Control</h1>
       <p>Professionelle TR-369-Geräteverwaltung</p>
-      <span class="login-version">Version 0.10.1 Beta</span>
+      <span class="login-version">Version 0.10.2 Beta</span>
       <label>Benutzername<input name="username" autocomplete="username" required></label>
       <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
       <button class="primary">Anmelden</button>
@@ -39,6 +39,6 @@
   </div>
   <dialog id="user-dialog" class="model-dialog"><form id="user-form"><div class="card-head"><div><h2 id="user-dialog-title">Benutzer bearbeiten</h2><p class="muted">Rolle, Status und Zugangsdaten verwalten</p></div><button type="button" class="secondary" data-user-close>×</button></div><input type="hidden" name="id"><label>Benutzername<input name="username" required minlength="3"></label><label>Anzeigename<input name="display_name"></label><label>Rolle<select name="role"><option value="viewer">Nur-Lesen</option><option value="operator">Operator</option><option value="admin">Administrator</option></select></label><label>Kennwort<input name="password" type="password" minlength="10" placeholder="Bei Bearbeitung leer lassen"></label><label class="check"><input name="active" type="checkbox" checked> Zugang aktiv</label><div class="actions"><button type="button" class="secondary" data-user-close>Abbrechen</button><button class="primary">Speichern</button></div></form></dialog>
   <div id="toast"></div>
-  <script src="/static/app.js?v=0.10.1"></script>
+  <script src="/static/app.js?v=0.10.2"></script>
 </body>
 </html>
