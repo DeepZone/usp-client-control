@@ -7,6 +7,20 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.0-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- interaktive Mesh-Übersicht unter „Heimnetz → Netzwerktopologie“
+- FRITZ!Box als Mesh Master sowie getrennte Darstellung von Mesh-Komponenten, WLAN-, LAN- und Powerline-Geräten
+- Zusammenführung von IEEE-1905-Topologie, aktiven Hosts, Schnittstellen, SSIDs und AVM-Verbindungsmetriken
+- Filter nach Verbindungstyp sowie anklickbare Clients mit Qualitäts-, Kapazitäts- und Zuordnungsdetails
+- optische Unterscheidung zwischen sicher gemeldeten und aus Host-Schnittstellen abgeleiteten Beziehungen
+
+### Geändert
+
+- bereits in der Mesh-Ansicht aufbereitete Topologieparameter werden unter „Weitere Heimnetzfunktionen“ nicht erneut als Rohdaten angezeigt
+
 ## [0.9.9-beta] – 2026-08-02
 
 ### Geändert
