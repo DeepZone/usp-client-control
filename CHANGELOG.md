@@ -7,6 +7,17 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.14.0-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- neuer Gerätemenüpunkt „Interface“ mit aufbereitetem TR-181/USP-Interface-Stack
+- verständliche Zuordnung über `LowerLayers` von IP und PPP/VLAN/Link bis zum physischen Zugangsmedium
+- gemeinsame Darstellung für Ethernet, WLAN, DSL, DOCSIS, Mobilfunk, Fiber, ATM und PTM
+- Statusübersicht, IP- und MAC-Adressen, MTU, Datenraten, Traffic-Zähler, Fehlerzähler und VLAN-Zuordnung
+- Erkennung nicht aufgelöster Interface-Verweise sowie gezielter Live-Abruf unterstützter Interface-Bereiche
+- weitere gelieferte Werte bleiben je Interface kompakt aufklappbar und bedienbar
+
 ## [0.13.1-beta] – 2026-08-02
 
 ### Geändert
