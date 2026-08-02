@@ -7,6 +7,18 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.11.4-beta] – 2026-08-02
+
+### Hinzugefügt
+
+- gezielter USP-Abruf der vollständigen Gerätedienste und des `BulkData`-Bereichs
+- automatischer Erstabruf auf der Diensteseite, wenn noch keine Servicewerte vorliegen
+- manueller, jederzeit wiederholbarer Abruf über „Dienste abrufen“
+
+### Geändert
+
+- neu eintreffende Dienstedaten werden ohne vollständiges Neuladen der Seite dynamisch dargestellt
+
 ## [0.11.3-beta] – 2026-08-02
 
 ### Hinzugefügt
