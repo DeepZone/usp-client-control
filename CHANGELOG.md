@@ -7,6 +7,15 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 - Weitere Aufbereitung des vollständigen USP-Datenmodells
 - Zusätzliche Modell- und FRITZ!OS-Kompatibilitätstests
 
+## [0.10.3-beta] – 2026-08-02
+
+### Geändert
+
+- Live-Werte werden per DOM-Differenz aktualisiert, ohne den sichtbaren Gerätebereich neu aufzubauen
+- WebSocket-Aktualisierungen werden gebündelt und in einer freien Browserphase verarbeitet
+- neue oder entfernte Prozesse, WLAN-Clients und andere Instanzen werden dynamisch in die bestehende Ansicht eingefügt
+- Scrollpositionen, geöffnete Detailbereiche, Eingabewerte und bestehende Bedienelemente bleiben bei Live-Updates erhalten
+
 ## [0.10.2-beta] – 2026-08-02
 
 ### Geändert

@@ -1,4 +1,4 @@
-const state={session:null,agents:[],agent:null,schema:[],section:'overview',socket:null,live:true,renderTimer:null};
+const state={session:null,agents:[],agent:null,schema:[],section:'overview',socket:null,live:true,renderTimer:null,livePatchPending:false};
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=(v='')=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=v=>v?new Date(v).toLocaleString('de-DE'):'–',detail=v=>{try{return JSON.parse(v)}catch{return v}};
@@ -306,17 +306,33 @@ renderAgentSection=function(){const sameSection=state.lastRenderedSection===stat
 
 // Live values are rendered into a detached snapshot and then morphed into the
 // visible DOM. Existing elements, scroll containers, focus and event handlers
-// stay intact. Only a genuine structural change (for example a newly created
-// process, radio or client instance) falls back to a complete section render.
+// stay intact. New or removed instances are inserted/removed by the same diff;
+// the visible section is never rebuilt for a live update.
 function liveNodeKey(node){if(node.nodeType!==Node.ELEMENT_NODE)return'';for(const name of ['id','data-param-path','data-client-id','data-mesh-client-id','data-functional-group','data-command','data-endpoint']){const value=node.getAttribute(name);if(value)return`${node.tagName}:${name}:${value}`}if(node.tagName==='TR'){const cells=[...node.cells].slice(0,2).map(cell=>cell.textContent.trim()).join('|');if(cells)return`TR:${cells}`}if(node.tagName==='ARTICLE'){const heading=node.querySelector('h2,h3,strong')?.textContent.trim();if(heading)return`ARTICLE:${node.className}:${heading}`}return''}
 function compatibleLiveNode(current,fresh){return current&&fresh&&current.nodeType===fresh.nodeType&&(current.nodeType!==Node.ELEMENT_NODE||current.tagName===fresh.tagName)}
 function morphLiveChildren(current,fresh){const desired=[...fresh.childNodes];for(let index=0;index<desired.length;index++){const freshChild=desired[index],key=liveNodeKey(freshChild);let currentChild=current.childNodes[index];if(key&&liveNodeKey(currentChild)!==key){const match=[...current.childNodes].slice(index+1).find(node=>liveNodeKey(node)===key);if(match){current.insertBefore(match,currentChild||null);currentChild=match}else{current.insertBefore(freshChild.cloneNode(true),currentChild||null);currentChild=current.childNodes[index]}}else if(!compatibleLiveNode(currentChild,freshChild)){current.insertBefore(freshChild.cloneNode(true),currentChild||null);currentChild=current.childNodes[index]}morphLiveDom(currentChild,freshChild)}while(current.childNodes.length>desired.length)current.lastChild.remove()}
 function morphLiveDom(current,fresh){if(!compatibleLiveNode(current,fresh))return false;if(current.nodeType===Node.TEXT_NODE){if(current.nodeValue!==fresh.nodeValue)current.nodeValue=fresh.nodeValue;return true}if(current.nodeType!==Node.ELEMENT_NODE)return true;const preserveValue=/^(INPUT|TEXTAREA|SELECT)$/.test(current.tagName),preserveOpen=current.tagName==='DETAILS';for(const attribute of [...current.attributes])if(!fresh.hasAttribute(attribute.name)&&!(preserveOpen&&attribute.name==='open'))current.removeAttribute(attribute.name);for(const attribute of [...fresh.attributes]){if(attribute.name==='hidden'||preserveOpen&&attribute.name==='open')continue;if(current.getAttribute(attribute.name)!==attribute.value)current.setAttribute(attribute.name,attribute.value)}if(!preserveValue)morphLiveChildren(current,fresh);return true}
-function buildSectionSnapshot(){const current=$('#agent-panel');if(!current)return null;const snapshot=document.createElement('section');snapshot.id='agent-panel';snapshot.className=current.className;snapshot.hidden=true;current.id='agent-panel-current';current.parentNode.insertBefore(snapshot,current);const selected=state.selectedClient;state.selectedClient=null;try{baseRenderAgentSection()}finally{state.selectedClient=selected;current.id='agent-panel';snapshot.id='agent-panel-snapshot';snapshot.hidden=false;snapshot.remove()}return snapshot}
+function buildSectionSnapshot(){const current=$('#agent-panel');if(!current)return null;const snapshot=document.createElement('section');snapshot.id='agent-panel';snapshot.className=current.className;snapshot.hidden=true;current.id='agent-panel-current';current.parentNode.insertBefore(snapshot,current);const selected=state.selectedClient;state.selectedClient=null;try{baseRenderAgentSection()}finally{state.selectedClient=selected;current.id='agent-panel';snapshot.hidden=false;snapshot.remove()}return snapshot}
 function patchClientDrawerLive(){const current=$('#client-drawer');if(!current||!state.selectedClient)return true;const snapshot=document.createElement('div');snapshot.id='client-drawer';snapshot.innerHTML='<div class="client-drawer-panel"></div>';snapshot.hidden=true;current.id='client-drawer-current';document.body.appendChild(snapshot);try{renderClientDrawer()}finally{current.id='client-drawer';snapshot.id='client-drawer-snapshot';snapshot.remove()}return morphLiveDom(current.querySelector('.client-drawer-panel'),snapshot.querySelector('.client-drawer-panel'))}
-function bindDynamicLiveNodes(){if(['wifi','network'].includes(state.section))bindClientButtons();if($('.functional-browser'))bindFunctionalPage();else if(state.section==='parameters')bindModelRows()}
-function patchLiveSection(){if(!state.agent||!$('#agent-panel'))return;if(['jobs','events','actions','history'].includes(state.section)){patchClientDrawerLive();return}renderAgentSection()}
-scheduleLiveRender=function(){if(state.renderTimer)return;state.renderTimer=setTimeout(()=>{state.renderTimer=null;patchLiveSection()},180)};
+function bindDynamicLiveNodes(){if(['wifi','network'].includes(state.section))bindClientButtons();if(state.section==='network')bindMesh();if($('.functional-browser'))bindFunctionalPage();else if(state.section==='parameters')bindModelRows()}
+function patchLiveSection(){
+  const current=$('#agent-panel');if(!state.agent||!current)return;
+  // These views already receive direct cell updates or are changed explicitly
+  // by the user. Rebuilding their potentially very large tables would only add
+  // work and could disturb an active form.
+  if(['internet','services','management','parameters','jobs','events','actions','history'].includes(state.section)){patchClientDrawerLive();return}
+  const view=captureViewPosition(),snapshot=buildSectionSnapshot();if(!snapshot)return;
+  morphLiveDom(current,snapshot);bindDynamicLiveNodes();patchClientDrawerLive();restoreViewPosition(view)
+}
+scheduleLiveRender=function(){
+  if(state.renderTimer||state.livePatchPending)return;
+  state.renderTimer=setTimeout(()=>{
+    state.renderTimer=null;state.livePatchPending=true;
+    const endpoint=state.agent?.agent?.endpoint_id,section=state.section;
+    const commit=()=>requestAnimationFrame(()=>{try{if(endpoint===state.agent?.agent?.endpoint_id&&section===state.section)patchLiveSection()}finally{state.livePatchPending=false}});
+    if('requestIdleCallback'in window)requestIdleCallback(commit,{timeout:400});else commit()
+  },120)
+};
 
 function deviceMemoryPercent(){const total=pnum('Device.DeviceInfo.MemoryStatus.Total'),free=pnum('Device.DeviceInfo.MemoryStatus.Free');return total>0&&free!=null?Math.max(0,Math.min(100,Math.round((total-free)/total*100))):null}
 function deviceWanIp(){const direct=pvFirst(['Device.IP.Interface.1.IPv4Address.1.IPAddress','Device.IP.Interface.1.IPv6Address.1.IPAddress'],'');if(direct)return direct;const row=state.agent.parameters.find(item=>/^Device\.IP\.Interface\.(?!1000\.)\d+\.IPv[46]Address\.\d+\.IPAddress$/.test(item.path)&&item.value&&!['0.0.0.0','::'].includes(String(item.value)));return row?.value||'–'}
