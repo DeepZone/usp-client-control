@@ -4,6 +4,28 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.1.0] – 2026-08-03
+
+### Hinzugefügt
+
+- agentenspezifische Live-Profile auf Basis des synchronisierten USP-Datenmodells
+- automatische vollständige Datenmodellsynchronisation für online kommende Agenten
+- automatische Subscriptions für Wertänderungen, Ereignisse, Objektanlage/-löschung und abgeschlossene Operationen
+- dynamische Auflösung von `{i}`-Datenmodellpfaden auf tatsächlich vorhandene FRITZ!Box-Instanzen
+- übersichtliche Live-Profilanzeige mit Fähigkeits- und Fallback-Zählern auf der Agentenseite
+- konfigurierbares, ressourcenschonendes Fallback-Polling für relevante nicht abonnierbare Messwerte
+
+### Geändert
+
+- „Live-Updates aktivieren“ ersetzt die feste CPU-Subscription durch ein automatisch ermitteltes Geräteprofil
+- neue und gelöschte USP-Objekte werden ohne vollständigen Seitenneuaufbau an die Oberfläche gemeldet
+- Jobversand wird auch für interne, protokollierte Live-Aktualisierungen sicher wiederverwendet
+
+### Behoben
+
+- abonnierbare FRITZ!OS-Werte außerhalb von `CPUUsage` wurden zuvor nicht berücksichtigt
+- doppelte persistente Subscriptions werden anhand von Typ und Referenz zuverlässig vermieden
+
 ## [1.0.1] – 2026-08-02
 
 ### Hinzugefügt

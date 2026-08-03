@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import ipaddress
 import json
 import os
@@ -41,6 +42,7 @@ mqtt_client = None
 mqtt_connected = False
 main_loop = None
 live_clients = set()
+poller_task = None
 observed_agents = {}
 observed_agents_lock = threading.RLock()
 traffic_sample_messages = {}
@@ -66,6 +68,9 @@ DEFAULT_LIVE_PATHS = [
     "Device.Optical.",
     "Device.Cellular.",
 ]
+DEFAULT_POLL_INTERVAL = 60
+MAX_AUTOMATIC_REFERENCES_PER_TYPE = 1500
+MIN_FULL_SCHEMA_ENTRIES = 100
 
 
 def now():
@@ -225,6 +230,134 @@ def live_paths_for_agent(endpoint):
     if fiber and "Device.XPON." not in paths:
         paths.append("Device.XPON.")
     return paths
+
+
+def poll_interval():
+    try:
+        return min(max(int(setting("live_poll_interval", DEFAULT_POLL_INTERVAL)), 15), 3600)
+    except (TypeError, ValueError):
+        return DEFAULT_POLL_INTERVAL
+
+
+def path_in_live_profile(path, configured=None):
+    configured = configured or live_paths()
+    return any(path == root or path.startswith(root) for root in configured)
+
+
+def schema_template_regex(path):
+    parts = re.split(r"(\{i\})", path)
+    return re.compile("^" + "".join(r"\d+" if part == "{i}" else re.escape(part) for part in parts) + "$")
+
+
+def resolve_template_instances(template, resolved_paths):
+    if "{i}" not in template:
+        return [template]
+    pieces = re.split(r"(\{i\})", template)
+    pattern = re.compile("^" + "".join(r"(\d+)" if piece == "{i}" else re.escape(piece) for piece in pieces) + ".*")
+    results = []
+    for candidate in resolved_paths:
+        match = pattern.match(candidate)
+        if not match:
+            continue
+        values = iter(match.groups())
+        results.append("".join(next(values) if piece == "{i}" else piece for piece in pieces))
+    return sorted(dict.fromkeys(results))
+
+
+def subscription_reference(path):
+    return path.replace(".{i}.", ".").replace("{i}.", "")
+
+
+def pack_subscription_references(paths, maximum_length=240):
+    groups = []
+    current = []
+    length = 0
+    for path in paths:
+        added = len(path) + (1 if current else 0)
+        if current and length + added > maximum_length:
+            groups.append(",".join(current))
+            current, length = [], 0
+        current.append(path)
+        length += len(path) + (1 if len(current) > 1 else 0)
+    if current:
+        groups.append(",".join(current))
+    return groups
+
+
+def automatic_live_profile(endpoint):
+    """Derive subscriptions and a bounded polling fallback from this agent's schema."""
+    configured = live_paths_for_agent(endpoint)
+    profile = {"ValueChange": [], "Event": [], "ObjectCreation": [], "ObjectDeletion": [], "OperationComplete": []}
+    with db() as connection:
+        schema = connection.execute(
+            "SELECT path,kind,value_change,value_type,metadata FROM model_schema WHERE endpoint_id=? ORDER BY path,kind",
+            (endpoint,),
+        ).fetchall()
+        resolved = [row["path"] for row in connection.execute(
+            "SELECT path FROM parameters WHERE endpoint_id=? ORDER BY path", (endpoint,)
+        ).fetchall()]
+    polling = []
+    allowed_resolved = set()
+    allowed_templates = []
+    event_templates = []
+    operation_templates = []
+    poll_name = re.compile(
+        r"(Status|Enable|Active|UpTime|Bytes|Packets|Rate|Speed|Power|SNR|MSE|RSRP|RSRQ|RSSI|SINR|"
+        r"Signal|Noise|Quality|Utilization|Usage|Load|Errors?|Temperature|Voltage|Current|Latency|Count)$",
+        re.I,
+    )
+    for row in schema:
+        path = row["path"]
+        if not path_in_live_profile(path, configured):
+            continue
+        if row["kind"] == "parameter" and row["value_change"] == "VALUE_CHANGE_ALLOWED":
+            allowed_templates.append(path)
+            if "{i}" in path:
+                matcher = schema_template_regex(path)
+                allowed_resolved.update(item for item in resolved if matcher.match(item))
+            elif path in resolved:
+                allowed_resolved.add(path)
+        elif row["kind"] == "parameter" and poll_name.search(path):
+            if "{i}" in path:
+                matcher = schema_template_regex(path)
+                polling.extend(item for item in resolved if matcher.match(item))
+            elif path in resolved:
+                polling.append(path)
+        elif row["kind"] == "event":
+            event_templates.append(path)
+        elif row["kind"] == "command" and row["value_type"] == "CMD_ASYNC":
+            operation_templates.append(path)
+        elif row["kind"] == "object":
+            metadata = json.loads(row["metadata"] or "{}")
+            if metadata.get("multi_instance"):
+                creation = (path[:-4] if path.endswith("{i}.") else subscription_reference(path)).replace("{i}", "*")
+                deletion = path.replace("{i}", "*")
+                profile["ObjectCreation"].append(creation)
+                profile["ObjectDeletion"].append(deletion)
+
+    # USP allows an Object Path for these notification types. One configured
+    # root therefore covers every supported current and future instance below it.
+    profile["ValueChange"] = [root for root in configured if any(path.startswith(root) for path in allowed_templates)]
+    profile["Event"] = [root for root in configured if any(path.startswith(root) for path in event_templates)]
+    profile["OperationComplete"] = [root for root in configured if any(path.startswith(root) for path in operation_templates)]
+    for kind in profile:
+        profile[kind] = sorted(dict.fromkeys(path for path in profile[kind] if len(path) <= 256))
+    order = ("ValueChange", "Event", "ObjectCreation", "ObjectDeletion", "OperationComplete")
+    for kind in order:
+        profile[kind] = profile[kind][:MAX_AUTOMATIC_REFERENCES_PER_TYPE]
+    profile["poll_paths"] = [path for path in sorted(dict.fromkeys(polling)) if path not in allowed_resolved][:160]
+    if not schema:
+        profile["poll_paths"] = configured
+    profile["poll_interval"] = poll_interval()
+    profile["subscription_count"] = sum(len(profile[kind]) for kind in order)
+    profile["capability_counts"] = {
+        "ValueChange": len(allowed_templates),
+        "Event": len(event_templates),
+        "OperationComplete": len(operation_templates),
+        "ObjectCreation": len(profile["ObjectCreation"]),
+        "ObjectDeletion": len(profile["ObjectDeletion"]),
+    }
+    return profile
 
 
 def emit_live(event_type, endpoint=None, payload=None):
@@ -481,6 +614,21 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
                 connection.execute("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", (endpoint, value.param_path, value.param_value, timestamp))
                 connection.execute("DELETE FROM parameter_history WHERE created_at < datetime('now','-7 days')")
             emit_live("parameter", endpoint, {"path": value.param_path, "value": value.param_value, "updated_at": timestamp})
+        elif notification_type == "event":
+            event = notification.event
+            emit_live("usp_event", endpoint, {"path": event.obj_path, "name": event.event_name, "parameters": dict(event.params)})
+        elif notification_type == "obj_creation":
+            created = notification.obj_creation
+            emit_live("object_created", endpoint, {"path": created.obj_path, "unique_keys": dict(created.unique_keys)})
+            try:
+                dispatch_job(endpoint, "get", {"paths": [created.obj_path], "max_depth": 0}, "system")
+            except Exception as exc:
+                record_event(endpoint, "LIVE_REFRESH_ERROR", {"path": created.obj_path, "error": str(exc)})
+        elif notification_type == "obj_deletion":
+            deleted = notification.obj_deletion
+            with db() as connection:
+                connection.execute("DELETE FROM parameters WHERE endpoint_id=? AND path LIKE ?", (endpoint, deleted.obj_path + "%"))
+            emit_live("object_deleted", endpoint, {"path": deleted.obj_path})
         elif notification_type == "oper_complete":
             operation = notification.oper_complete
             operation_kind = operation.WhichOneof("operation_resp")
@@ -498,6 +646,12 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
                     (operation_state, json.dumps(operation_data, ensure_ascii=False), operation_error, completed, operation.command_key),
                 )
             emit_live("speedtest", endpoint, {"msg_id": operation.command_key, "state": operation_state})
+            emit_live("operation_complete", endpoint, {
+                "path": operation.obj_path,
+                "command": operation.command_name,
+                "command_key": operation.command_key,
+                "result": data,
+            })
         if notification.send_resp and reply_topic:
             send_notify_response(endpoint, reply_topic, message.header.msg_id, notification.subscription_id, version)
 
@@ -615,6 +769,61 @@ def start_mqtt():
     mqtt_client.loop_start()
 
 
+async def live_poll_loop():
+    """Refresh only relevant non-notifiable values without blocking MQTT or UI."""
+    await asyncio.sleep(10)
+    while True:
+        interval = poll_interval()
+        try:
+            if mqtt_connected:
+                online_cutoff = datetime.fromtimestamp(time.time() - 15 * 60, timezone.utc).isoformat()
+                pending_cutoff = datetime.fromtimestamp(time.time() - max(interval, 30), timezone.utc).isoformat()
+                with db() as connection:
+                    endpoints = [row["endpoint_id"] for row in connection.execute(
+                        "SELECT endpoint_id FROM agents WHERE last_seen>=?", (online_cutoff,)
+                    ).fetchall()]
+                spacing = min(2.0, interval / max(1, len(endpoints)))
+                for endpoint in endpoints:
+                    with db() as connection:
+                        schema_count = connection.execute(
+                            "SELECT COUNT(*) FROM model_schema WHERE endpoint_id=?", (endpoint,)
+                        ).fetchone()[0]
+                        pending = connection.execute(
+                            "SELECT 1 FROM jobs WHERE endpoint_id=? AND action='get' AND state IN ('queued','sent') AND created_at>=? LIMIT 1",
+                            (endpoint, pending_cutoff),
+                        ).fetchone()
+                    if pending:
+                        continue
+                    if schema_count < MIN_FULL_SCHEMA_ENTRIES:
+                        sync_cutoff = datetime.fromtimestamp(time.time() - 3600, timezone.utc).isoformat()
+                        with db() as connection:
+                            recent_sync = connection.execute(
+                                "SELECT 1 FROM jobs WHERE endpoint_id=? AND action='get_supported_dm' AND created_at>=? LIMIT 1",
+                                (endpoint, sync_cutoff),
+                            ).fetchone()
+                        if not recent_sync:
+                            try:
+                                await asyncio.to_thread(
+                                    dispatch_job, endpoint, "get_supported_dm",
+                                    {"paths": ["Device."], "first_level_only": False}, "system"
+                                )
+                            except Exception as exc:
+                                record_event(endpoint, "MODEL_SYNC_ERROR", {"error": str(exc)})
+                        continue
+                    try:
+                        paths = automatic_live_profile(endpoint)["poll_paths"]
+                        if paths:
+                            await asyncio.to_thread(dispatch_job, endpoint, "get", {"paths": paths, "max_depth": 0}, "system")
+                    except Exception as exc:
+                        record_event(endpoint, "LIVE_POLL_ERROR", {"error": str(exc)})
+                    await asyncio.sleep(spacing)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record_event(None, "LIVE_POLLER_ERROR", {"error": str(exc)})
+        await asyncio.sleep(interval)
+
+
 class Login(BaseModel):
     username: str
     password: str
@@ -628,6 +837,7 @@ class JobRequest(BaseModel):
 class ControllerSettings(BaseModel):
     live_paths: list[str] = Field(default_factory=list)
     genieacs_url: str = ""
+    live_poll_interval: int = DEFAULT_POLL_INTERVAL
     udpst_host: str = ""
     udpst_port: int = 25000
     udpst_duration: int = 10
@@ -711,13 +921,29 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 async def startup():
-    global main_loop
+    global main_loop, poller_task
     main_loop = asyncio.get_running_loop()
     initialize_database()
     migrate_legacy_traffic()
     start_mqtt()
     asyncio.create_task(traffic_sampler(900, False))
     asyncio.create_task(traffic_sampler(300, True))
+    poller_task = asyncio.create_task(live_poll_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global poller_task
+    if poller_task:
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
+        poller_task = None
+    if mqtt_client:
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
 
 
 @app.get("/")
@@ -960,6 +1186,7 @@ def controller_settings(request: Request):
         "mqtt_password_configured": bool(os.getenv("MQTT_CONTROLLER_PASSWORD")),
         "mqtt_connected": mqtt_connected,
         "live_paths": live_paths(),
+        "live_poll_interval": poll_interval(),
         "genieacs_url": setting("genieacs_url", GENIEACS_DEFAULT),
         "udpst_host": setting("udpst_host"),
         "udpst_port": int(setting("udpst_port", "25000")),
@@ -981,6 +1208,8 @@ def controller_settings_update(data: ControllerSettings, request: Request):
     if not paths or len(paths) > 100:
         raise HTTPException(400, "Bitte 1 bis 100 Live-Pfade angeben")
     save_setting("live_paths", json.dumps(paths, ensure_ascii=False))
+    interval = min(max(int(data.live_poll_interval), 15), 3600)
+    save_setting("live_poll_interval", interval)
     genieacs_url = data.genieacs_url.strip().rstrip("/") or setting("genieacs_url", GENIEACS_DEFAULT)
     parsed = urllib.parse.urlparse(genieacs_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -1011,8 +1240,8 @@ def controller_settings_update(data: ControllerSettings, request: Request):
         if len(data.udpst_auth_key) > 32 or not re.fullmatch(r"[A-Za-z0-9.:()]+", data.udpst_auth_key):
             raise HTTPException(400, "Der UDPST-Auth-Key enthält unzulässige Zeichen")
         save_setting("udpst_auth_key", data.udpst_auth_key)
-    audit(user["username"], "Live-Profil geändert", detail=f"{len(paths)} Pfade")
-    return {"ok": True, "live_paths": paths, "genieacs_url": genieacs_url}
+    audit(user["username"], "Live-Profil geändert", detail=f"{len(paths)} Pfade · Polling {interval}s")
+    return {"ok": True, "live_paths": paths, "live_poll_interval": interval, "genieacs_url": genieacs_url}
 
 
 @app.get("/api/genieacs/status")
@@ -1139,45 +1368,33 @@ def refresh_live(endpoint: str, request: Request):
     return create_job(endpoint, JobRequest(action="get", payload={"paths": live_paths_for_agent(endpoint), "max_depth": 0}), request)
 
 
+@app.get("/api/agents/{endpoint}/live-profile")
+def live_profile(endpoint: str, request: Request):
+    current_user(request)
+    with db() as connection:
+        if not connection.execute("SELECT 1 FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone():
+            raise HTTPException(404, "USP-Agent nicht gefunden")
+        schema_count = connection.execute("SELECT COUNT(*) FROM model_schema WHERE endpoint_id=?", (endpoint,)).fetchone()[0]
+    profile = automatic_live_profile(endpoint)
+    profile["schema_synchronized"] = schema_count >= MIN_FULL_SCHEMA_ENTRIES
+    profile["schema_count"] = schema_count
+    return profile
+
+
 @app.post("/api/agents/{endpoint}/subscribe-live")
 def subscribe_live(endpoint: str, request: Request):
-    # FRITZ!OS limits ReferenceList to 256 characters and validates every path.
-    # Create one immutable subscription per path and skip model branches the
-    # connected agent does not actually expose.
-    # FRITZ!OS 8.24 currently advertises ValueChange for only a small subset
-    # of the analysis values. CPUUsage is confirmed notification-capable;
-    # the remaining profile paths stay available for live GET responses and
-    # unsolicited Notify messages without producing invalid USP jobs.
-    notifiable = {"Device.DeviceInfo.ProcessStatus.CPUUsage"}
-    available = []
-    configured_paths = live_paths()
-    with db() as connection:
-        for path in notifiable:
-            # Live profiles normally contain object roots such as
-            # Device.DeviceInfo.; a notification-capable leaf below that root
-            # must therefore be considered configured as well.
-            if not any(path == configured or (configured.endswith(".") and path.startswith(configured)) for configured in configured_paths):
-                continue
-            if path.endswith("."):
-                exists = connection.execute(
-                    "SELECT 1 FROM parameters WHERE endpoint_id=? AND path LIKE ? LIMIT 1",
-                    (endpoint, path + "%"),
-                ).fetchone()
-            else:
-                exists = connection.execute(
-                    "SELECT 1 FROM parameters WHERE endpoint_id=? AND path=? LIMIT 1",
-                    (endpoint, path),
-                ).fetchone()
-            if exists:
-                available.append(path)
-    if not available:
-        raise HTTPException(400, "Keine unterstützten Live-Pfade im aktuellen Datenbestand")
-
-    # Keep this operation idempotent. FRITZ!OS enforces Subscription.ID as a
-    # unique key and returns USP 7025 when the button is pressed a second time.
-    # Completed ADD responses are retained in the job journal and therefore
-    # remain usable even when the agent did not expose the subscription table.
-    existing_paths = set()
+    user = current_user(request)
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Diese Rolle besitzt ausschließlich Leserechte")
+    profile = automatic_live_profile(endpoint)
+    subscription_specs = [
+        (kind, reference_list)
+        for kind in ("ValueChange", "Event", "ObjectCreation", "ObjectDeletion", "OperationComplete")
+        for reference_list in pack_subscription_references(profile[kind])
+    ]
+    if not subscription_specs:
+        raise HTTPException(400, "Das synchronisierte Datenmodell weist keine abonnierbaren Live-Werte aus")
+    existing = set()
     with db() as connection:
         rows = connection.execute(
             "SELECT state,request_json,response_json FROM jobs "
@@ -1195,42 +1412,70 @@ def subscribe_live(endpoint: str, request: Request):
                 if isinstance(item, dict)
             }
             path = parameters.get("ReferenceList")
-            if not path:
+            notif_type = parameters.get("NotifType")
+            if not path or not notif_type:
                 continue
             if row["state"] == "complete":
-                existing_paths.add(path)
+                existing.add((notif_type, path))
                 continue
-            # A duplicate-key response also proves that this persistent
-            # subscription already exists on the agent.
             response = json.loads(row["response_json"] or "{}")
             errors = response.get("body", {}).get("error", {}).get("param_errs", [])
             if any(error.get("err_code") == 7025 and error.get("param_path") == "ID" for error in errors):
-                existing_paths.add(path)
+                existing.add((notif_type, path))
         except (TypeError, ValueError, AttributeError):
             continue
 
-    missing = [path for path in available if path not in existing_paths]
+    missing = [spec for spec in subscription_specs if spec not in existing]
     jobs = []
-    for index, path in enumerate(missing, 1):
+    for notif_type, path in missing:
+        stable_id = hashlib.sha1(f"{notif_type}:{path}".encode()).hexdigest()[:16]
         payload = {
             "object_path": "Device.LocalAgent.Subscription.",
             "parameters": [
                 {"name": "Enable", "value": "true", "required": True},
-                {"name": "ID", "value": f"noisens-live-{index}", "required": True},
-                {"name": "NotifType", "value": "ValueChange", "required": True},
+                {"name": "ID", "value": f"noisens-{stable_id}", "required": True},
+                {"name": "NotifType", "value": notif_type, "required": True},
                 {"name": "ReferenceList", "value": path, "required": True},
                 {"name": "Persistent", "value": "true", "required": True},
                 {"name": "TimeToLive", "value": "0", "required": False},
             ],
         }
         jobs.append(create_job(endpoint, JobRequest(action="add", payload=payload), request))
+    audit(user["username"], "Automatisches Live-Profil aktiviert", endpoint,
+          f"{len(jobs)} neu · {len(existing.intersection(subscription_specs))} vorhanden")
     return {
         "ok": True,
         "status": "created" if jobs else "already_active",
         "subscriptions": jobs,
-        "paths": available,
-        "existing_paths": sorted(existing_paths.intersection(available)),
+        "profile": profile,
+        "created": len(jobs),
+        "existing": len(existing.intersection(subscription_specs)),
     }
+
+
+def dispatch_job(endpoint, action, payload, actor="system"):
+    with db() as connection:
+        agent_row = connection.execute("SELECT protocol_version,reply_topic FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+    if not agent_row:
+        raise ValueError("USP-Agent nicht gefunden")
+    message = build_message(action, payload)
+    topic = agent_row["reply_topic"] or agent_topic(endpoint)
+    stored_payload = json.loads(json.dumps(payload))
+    if action == "operate" and isinstance(stored_payload.get("input_args"), dict) and "X_AuthKey" in stored_payload["input_args"]:
+        stored_payload["input_args"]["X_AuthKey"] = "[geschützt]"
+    with db() as connection:
+        connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, action, json.dumps(stored_payload, ensure_ascii=False), "queued", now()))
+    try:
+        publish_message(endpoint, topic, message, agent_row["protocol_version"] or "1.3")
+        with db() as connection:
+            connection.execute("UPDATE jobs SET state='sent' WHERE msg_id=?", (message.header.msg_id,))
+    except Exception as exc:
+        with db() as connection:
+            connection.execute("UPDATE jobs SET state='failed',error=?,completed_at=? WHERE msg_id=?", (str(exc), now(), message.header.msg_id))
+        raise
+    if actor != "system":
+        audit(actor, f"USP {action}", endpoint, json.dumps(stored_payload, ensure_ascii=False))
+    return {"ok": True, "msg_id": message.header.msg_id, "topic": topic}
 
 
 @app.post("/api/agents/{endpoint}/jobs")
@@ -1238,25 +1483,14 @@ def create_job(endpoint: str, data: JobRequest, request: Request):
     user = current_user(request)
     if data.action in {"set", "add", "delete", "operate"} and user["role"] == "viewer":
         raise HTTPException(403, "Diese Rolle besitzt ausschließlich Leserechte")
-    with db() as connection:
-        agent_row = connection.execute("SELECT protocol_version,reply_topic FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
-    if not agent_row:
-        raise HTTPException(404, "USP-Agent nicht gefunden")
     try:
-        message = build_message(data.action, data.payload)
-        topic = agent_row["reply_topic"] or agent_topic(endpoint)
-        stored_payload = json.loads(json.dumps(data.payload))
-        if data.action == "operate" and isinstance(stored_payload.get("input_args"), dict) and "X_AuthKey" in stored_payload["input_args"]:
-            stored_payload["input_args"]["X_AuthKey"] = "[geschützt]"
-        with db() as connection:
-            connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, data.action, json.dumps(stored_payload, ensure_ascii=False), "queued", now()))
-        publish_message(endpoint, topic, message, agent_row["protocol_version"] or "1.3")
-        with db() as connection:
-            connection.execute("UPDATE jobs SET state='sent' WHERE msg_id=?", (message.header.msg_id,))
-        audit(user["username"], f"USP {data.action}", endpoint, json.dumps(stored_payload, ensure_ascii=False))
-        return {"ok": True, "msg_id": message.header.msg_id, "topic": topic}
+        return dispatch_job(endpoint, data.action, data.payload, user["username"])
+    except ValueError as exc:
+        if str(exc) == "USP-Agent nicht gefunden":
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/agents/{endpoint}/speedtests")
