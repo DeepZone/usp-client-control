@@ -4,6 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.1.1] – 2026-08-03
+
+### Geändert
+
+- technische Live-Profilanalyse von der Geräteübersicht entfernt; automatische Synchronisation, Subscriptions und Polling bleiben unverändert aktiv
+
 ## [1.1.0] – 2026-08-03
 
 ### Hinzugefügt
