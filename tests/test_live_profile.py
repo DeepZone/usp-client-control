@@ -58,6 +58,27 @@ class LiveProfileTests(unittest.TestCase):
         self.assertEqual(paths, [path for group in groups for path in group.split(",")])
         self.assertTrue(all(len(group) <= 240 for group in groups))
 
+    def test_reset_clears_state_but_retains_agent_identity(self):
+        timestamp = app.now()
+        with app.db() as connection:
+            connection.execute("INSERT INTO parameter_history(endpoint_id,path,value,created_at) VALUES(?,?,?,?)", ("agent", "Device.Test", "1", timestamp))
+            connection.execute("INSERT INTO traffic_counters(endpoint_id,bytes_received,bytes_sent,sampled_at) VALUES(?,?,?,?)", ("agent", 1, 2, timestamp))
+            connection.execute("INSERT INTO traffic_samples(endpoint_id,bucket_start,down_bps,up_bps) VALUES(?,?,?,?)", ("agent", timestamp, 3, 4))
+            connection.execute("INSERT INTO events(endpoint_id,kind,detail,created_at) VALUES(?,?,?,?)", ("agent", "TEST", "{}", timestamp))
+        app.observe_agent("agent")
+        app.clear_agent_state("agent")
+        with app.db() as connection:
+            self.assertIsNotNone(connection.execute("SELECT 1 FROM agents WHERE endpoint_id='agent'").fetchone())
+            for table in ("parameters", "parameter_history", "traffic_counters", "traffic_samples", "model_schema", "events"):
+                self.assertEqual(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE endpoint_id='agent'").fetchone()[0], 0)
+        self.assertNotIn("agent", app.observed_agents)
+
+    def test_delete_removes_agent_and_all_state(self):
+        app.clear_agent_state("agent", remove_agent=True)
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT 1 FROM agents WHERE endpoint_id='agent'").fetchone())
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM parameters WHERE endpoint_id='agent'").fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,22 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.1.2] – 2026-08-05
+
+### Hinzugefügt
+
+- Agenten können nach einem Wechsel des Zugangsmediums controllerseitig zurückgesetzt und vollständig neu synchronisiert werden
+- Administratoren können Agenten samt Messwerten, Historie, Aufträgen, Ereignissen und Datenmodell dauerhaft löschen
+
+### Sicherheit
+
+- Zurücksetzen ist auf Operatoren und Administratoren, endgültiges Löschen ausschließlich auf Administratoren beschränkt
+- beide Aktionen verlangen eine ausführliche Sicherheitsbestätigung; ein Reset verändert weder FRITZ!Box-Konfiguration noch USP-Zugang
+
+### Geändert
+
+- nach einer Datenmodellsynchronisation liest USP Control nur tatsächlich unterstützte Live-Bereiche und erkennt dadurch DSL-/Fiber-Wechsel ohne veraltete Zugangsdaten
+
 ## [1.1.1] – 2026-08-03
 
 ### Geändert

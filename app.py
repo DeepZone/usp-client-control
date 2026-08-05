@@ -232,6 +232,21 @@ def live_paths_for_agent(endpoint):
     return paths
 
 
+def supported_live_paths(endpoint):
+    """Return configured live roots that the agent's current model supports."""
+    configured = live_paths()
+    with db() as connection:
+        schema_paths = [row["path"] for row in connection.execute(
+            "SELECT path FROM model_schema WHERE endpoint_id=?", (endpoint,)
+        ).fetchall()]
+    if not schema_paths:
+        return configured
+    paths = [root for root in configured if any(path.startswith(root) or root.startswith(path) for path in schema_paths)]
+    if any(path.startswith("Device.XPON.") for path in schema_paths) and "Device.XPON." not in paths:
+        paths.append("Device.XPON.")
+    return paths
+
+
 def poll_interval():
     try:
         return min(max(int(setting("live_poll_interval", DEFAULT_POLL_INTERVAL)), 15), 3600)
@@ -561,6 +576,14 @@ def store_supported_model(endpoint, response):
         connection.execute("DELETE FROM model_schema WHERE endpoint_id=?", (endpoint,))
         connection.executemany("INSERT INTO model_schema(endpoint_id,path,kind,name,access,value_type,value_change,metadata,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", rows)
     emit_live("schema", endpoint, {"count": len(rows), "updated_at": timestamp})
+    # A model refresh may follow a changed access medium. Read only roots the
+    # freshly synchronized model actually exposes, avoiding invalid paths.
+    paths = supported_live_paths(endpoint)
+    if paths:
+        try:
+            dispatch_job(endpoint, "get", {"paths": paths, "max_depth": 0}, "system")
+        except Exception as exc:
+            record_event(endpoint, "MODEL_REFRESH_ERROR", {"error": str(exc)})
 
 
 def send_notify_response(endpoint, topic, msg_id, subscription_id, version):
@@ -1366,6 +1389,56 @@ def agent_schema(endpoint: str, request: Request):
 @app.post("/api/agents/{endpoint}/refresh-live")
 def refresh_live(endpoint: str, request: Request):
     return create_job(endpoint, JobRequest(action="get", payload={"paths": live_paths_for_agent(endpoint), "max_depth": 0}), request)
+
+
+def clear_agent_state(endpoint, remove_agent=False):
+    """Clear controller-side state while optionally retaining agent identity."""
+    with db() as connection:
+        exists = connection.execute("SELECT 1 FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+        if not exists:
+            raise ValueError("USP-Agent nicht gefunden")
+        for table in ("parameter_history", "traffic_counters", "traffic_samples", "model_schema", "events"):
+            connection.execute(f"DELETE FROM {table} WHERE endpoint_id=?", (endpoint,))
+        # These tables cascade when the agent itself is removed. Explicitly
+        # clearing them also gives a retained agent a genuinely clean state.
+        connection.execute("DELETE FROM speed_tests WHERE endpoint_id=?", (endpoint,))
+        connection.execute("DELETE FROM jobs WHERE endpoint_id=?", (endpoint,))
+        connection.execute("DELETE FROM parameters WHERE endpoint_id=?", (endpoint,))
+        if remove_agent:
+            connection.execute("DELETE FROM agents WHERE endpoint_id=?", (endpoint,))
+    with observed_agents_lock:
+        observed_agents.pop(endpoint, None)
+
+
+@app.post("/api/agents/{endpoint}/reset")
+def reset_agent(endpoint: str, request: Request):
+    user = current_user(request)
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Diese Rolle besitzt ausschließlich Leserechte")
+    try:
+        clear_agent_state(endpoint)
+        synchronization = dispatch_job(
+            endpoint, "get_supported_dm", {"paths": ["Device."], "first_level_only": False}, "system"
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(409, f"Neusynchronisation konnte nicht gestartet werden: {exc}") from exc
+    audit(user["username"], "USP-Agent zurückgesetzt", endpoint, "Controllerdaten gelöscht; Datenmodell-Neusynchronisation gestartet")
+    emit_live("agent_reset", endpoint, {"msg_id": synchronization["msg_id"]})
+    return {"ok": True, "status": "synchronizing", "msg_id": synchronization["msg_id"]}
+
+
+@app.delete("/api/agents/{endpoint}")
+def delete_agent(endpoint: str, request: Request):
+    user = current_user(request, admin=True)
+    try:
+        clear_agent_state(endpoint, remove_agent=True)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    audit(user["username"], "USP-Agent gelöscht", endpoint, "Agent und sämtliche zugehörigen Controllerdaten dauerhaft gelöscht")
+    emit_live("agent_deleted", endpoint)
+    return {"ok": True}
 
 
 @app.get("/api/agents/{endpoint}/live-profile")

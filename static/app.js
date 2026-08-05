@@ -513,3 +513,36 @@ settings=async function(){
   if(liveCard)liveCard.insertAdjacentHTML('beforebegin',`<section class="card config-card"><div class="card-head"><div><h2>UDPST-Speedtest</h2><p class="muted">Zentraler TR-471-Testserver für alle USP-Agenten</p></div>${status(data.udpst_auth_configured?'Auth-Key konfiguriert':'Ohne Auth-Key',data.udpst_auth_configured?'good':'')}</div><div class="config-grid"><label>UDPST-Server<input id="udpst-host" value="${esc(data.udpst_host)}" required></label><label>Port<input id="udpst-port" type="number" min="1" max="65535" value="${esc(data.udpst_port)}" required></label><label>Standarddauer<input id="udpst-duration" type="number" min="5" max="30" value="${esc(data.udpst_duration)}" required><small>5 bis 30 Sekunden</small></label><label>Auth-Key<input id="udpst-auth-key" type="password" maxlength="32" placeholder="${data.udpst_auth_configured?'Unverändert lassen':'Optional'}"><small>„-“ entfernt einen gespeicherten Key</small></label></div><div class="notice">Der Auth-Key bleibt ausschließlich auf dem Controller und wird im Browser, Auditprotokoll und Auftragsjournal nicht ausgegeben.</div></section>`)
 };
 saveSettings=async function(event){event.preventDefault();try{const form=new FormData(event.currentTarget),paths=lines(form.get('paths')),payload={live_paths:paths,live_poll_interval:Number(form.get('live_poll_interval')),genieacs_url:$('#genieacs-url').value.trim(),udpst_host:$('#udpst-host').value.trim(),udpst_port:Number($('#udpst-port').value),udpst_duration:Number($('#udpst-duration').value),udpst_auth_key:$('#udpst-auth-key').value};await api('/api/settings',{method:'PUT',body:JSON.stringify(payload)});toast('Konfiguration gespeichert und Verbindungen geprüft');settings()}catch(error){toast(error.message,true)}};
+
+// Controller-side lifecycle actions. Reset retains the endpoint and transport
+// identity; delete is deliberately restricted to administrators.
+const renderAgentOverviewWithTraffic=renderAgentOverview;
+renderAgentOverview=function(panel){
+  renderAgentOverviewWithTraffic(panel);
+  const actions=panel.querySelector('.section-title .section-actions');
+  if(!actions||state.session.role==='viewer')return;
+  actions.insertAdjacentHTML('beforeend',`<button class="secondary" id="agent-reset">Agent zurücksetzen</button>${state.session.role==='admin'?'<button class="danger" id="agent-delete">Agent löschen</button>':''}`);
+  $('#agent-reset').onclick=resetCurrentAgent;
+  if($('#agent-delete'))$('#agent-delete').onclick=deleteCurrentAgent
+};
+
+async function resetCurrentAgent(){
+  const endpoint=state.agent.agent.endpoint_id;
+  if(!confirm(`Agent „${endpoint}“ im Controller zurücksetzen?\n\nAlle erfassten Werte, Verläufe, Aufträge und das bisherige Datenmodell werden gelöscht. Die FRITZ!Box-Konfiguration und der USP-Zugang bleiben unverändert. Anschließend wird das aktuelle Datenmodell neu synchronisiert.`))return;
+  try{
+    await api(`/api/agents/${encodeURIComponent(endpoint)}/reset`,{method:'POST',body:'{}'});
+    toast('Agent zurückgesetzt · Datenmodell wird neu synchronisiert');
+    await agents()
+  }catch(error){toast(error.message,true)}
+}
+
+async function deleteCurrentAgent(){
+  const endpoint=state.agent.agent.endpoint_id;
+  if(!confirm(`Agent „${endpoint}“ dauerhaft aus USP Control löschen?\n\nMesswerte, Historie, Aufträge, Ereignisse und Datenmodell werden unwiderruflich entfernt. Meldet sich das Gerät später erneut, wird es als neuer Agent angelegt.`))return;
+  try{
+    await api(`/api/agents/${encodeURIComponent(endpoint)}`,{method:'DELETE'});
+    state.agent=null;state.schema=[];
+    toast('USP-Agent dauerhaft gelöscht');
+    await agents()
+  }catch(error){toast(error.message,true)}
+}
