@@ -4,42 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
-## [1.2.3] – 2026-08-11
-
-### Behoben
-
-- geschützte AVM-WebSocket-Kennung wird als Query-Parameter im bestehenden `/usp`-Pfad übertragen, damit sie zuverlässig durch Nginx Proxy Manager weitergeleitet wird
-
-## [1.2.2] – 2026-08-11
-
-### Behoben
-
-- FRITZ!OS-WebSocket-Agenten können sich nun mit ihrer geheimen Controller-Pfadkennung anmelden, auch wenn AVM weder HTTP-Basic-Authentifizierung noch das optionale Subprotokoll `v1.usp` mitsendet
-- Standardkonforme Clients behalten weiterhin Token-, Basic-Auth- und `v1.usp`-Unterstützung
-
-## [1.2.1] – 2026-08-11
-
-### Hinzugefügt
-
-- FRITZ!OS-kompatible HTTP-Basic-Authentifizierung für den USP-WebSocket-MTP; der konfigurierbare Benutzername ist standardmäßig `box`
-- vollständige Protokollierung der WebSocket-Verbindungsphasen ohne Geheimnisse sowie automatische Datenmodell-Synchronisierung nach einem `WebSocketConnectRecord`
+## [1.2.4] – 2026-08-11
 
 ### Geändert
 
-- WebSocket-Verarbeitung nutzt `wsproto` für robuste, binäre USP-Verbindungen hinter Reverse-Proxies
-- Konfigurationstexte erklären die separate Eingabe von Host, Port, Pfad, Benutzername und Controller-Kennwort
-
-### Sicherheit
-
-- nicht authentifizierte WebSocket-Verbindungsversuche erhalten eine HTTP-401-Basic-Challenge; Zugriffstoken und Kennwörter werden weder protokolliert noch im Frontend preisgegeben
-
-## [1.2.0] – 2026-08-10
-
-### Hinzugefügt
-
-- zusätzlicher TR-369-WebSocket-MTP unter `/usp` mit binären USP-Records und dem vorgeschriebenen Subprotocol `v1.usp`
-- abgesicherte Agentenidentifikation über Endpoint-ID und ein serverseitiges Zugriffstoken
-- paralleler Betrieb von MQTT und WebSocket; vorhandene MQTT-Routen bleiben unverändert bevorzugt
+- öffentliche Dokumentation und Konfigurationsoberfläche auf den produktiv genutzten MQTT-Betrieb fokussiert
+- interne Entwicklungsarbeiten werden nicht in öffentlichen Projektunterlagen beschrieben
 
 ## [1.1.2] – 2026-08-05
 
@@ -382,7 +352,7 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 ### Geändert
 
 - Live-Werte werden per DOM-Differenz aktualisiert, ohne den sichtbaren Gerätebereich neu aufzubauen
-- WebSocket-Aktualisierungen werden gebündelt und in einer freien Browserphase verarbeitet
+- Live-Aktualisierungen werden gebündelt und in einer freien Browserphase verarbeitet
 - neue oder entfernte Prozesse, WLAN-Clients und andere Instanzen werden dynamisch in die bestehende Ansicht eingefügt
 - Scrollpositionen, geöffnete Detailbereiche, Eingabewerte und bestehende Bedienelemente bleiben bei Live-Updates erhalten
 

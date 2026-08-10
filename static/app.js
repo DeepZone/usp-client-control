@@ -546,13 +546,3 @@ async function deleteCurrentAgent(){
     await agents()
   }catch(error){toast(error.message,true)}
 }
-
-// WebSocket is an additional USP MTP. MQTT configuration remains read-only
-// and unchanged; the password is never exposed in the UI.
-const settingsWithWebSocket=settings;
-settings=async function(){
-  await settingsWithWebSocket();
-  const data=await api('/api/settings'),identity=$('.config-card');
-  if(!identity)return;
-  identity.insertAdjacentHTML('afterend',`<section class="card config-card"><div class="card-head"><div><h2>USP über WebSocket</h2><p class="muted">Zusätzlicher TR-369-Transport neben dem unveränderten MQTT-Broker</p></div>${status(data.websocket_enabled?'Bereit':'Nicht konfiguriert',data.websocket_enabled?'good':'bad')}</div><div class="config-grid"><label>Öffentliche WebSocket-URL<input value="${esc(data.websocket_url||'Noch nicht hinterlegt')}" readonly></label><label>USP-Pfad<input value="${esc(data.websocket_path)}" readonly></label><label>Subprotocol<input value="v1.usp (optional bei FRITZ!OS)" readonly></label><label>Authentifizierung<input value="Geschützter Controller-Pfad" readonly></label></div><div class="notice">In FRITZ!OS werden Host, Port und der hier angezeigte Pfad getrennt eingetragen. Der Pfad ist eine geheime Controller-Kennung und ersetzt dort die HTTP-Anmeldung. MQTT bleibt parallel aktiv und unverändert.</div></section>`)
-};
