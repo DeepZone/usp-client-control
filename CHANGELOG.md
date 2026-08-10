@@ -4,6 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.6] – 2026-08-11
+
+### Behoben
+
+- CPU-Analyse bleibt bei Live-Aktualisierungen sichtbar und lädt nur ihre Prozessauswertung gezielt nach, statt den gesamten Systembereich neu aufzubauen
+
 ## [1.2.5] – 2026-08-11
 
 ### Hinzugefügt
