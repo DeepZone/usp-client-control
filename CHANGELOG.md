@@ -4,6 +4,19 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.3] – 2026-08-11
+
+### Behoben
+
+- geschützte AVM-WebSocket-Kennung wird als Query-Parameter im bestehenden `/usp`-Pfad übertragen, damit sie zuverlässig durch Nginx Proxy Manager weitergeleitet wird
+
+## [1.2.2] – 2026-08-11
+
+### Behoben
+
+- FRITZ!OS-WebSocket-Agenten können sich nun mit ihrer geheimen Controller-Pfadkennung anmelden, auch wenn AVM weder HTTP-Basic-Authentifizierung noch das optionale Subprotokoll `v1.usp` mitsendet
+- Standardkonforme Clients behalten weiterhin Token-, Basic-Auth- und `v1.usp`-Unterstützung
+
 ## [1.2.1] – 2026-08-11
 
 ### Hinzugefügt

@@ -41,6 +41,17 @@ WEBSOCKET_PATH = os.getenv("USP_WEBSOCKET_PATH", "/usp")
 WEBSOCKET_PUBLIC_URL = os.getenv("USP_WEBSOCKET_PUBLIC_URL", "")
 WEBSOCKET_TOKEN = os.getenv("USP_WEBSOCKET_TOKEN", "")
 WEBSOCKET_USERNAME = os.getenv("USP_WEBSOCKET_USERNAME", "box")
+# AVM FRITZ!OS WebSocket agents currently do not send HTTP Basic credentials
+# (nor the optional v1.usp subprotocol) during their initial connection. The
+# per-controller path is therefore a deterministic, non-reversible secret
+# derived from the server-side token. It is only shown to administrators.
+WEBSOCKET_PATH_KEY = os.getenv(
+    "USP_WEBSOCKET_PATH_KEY",
+    hashlib.sha256(WEBSOCKET_TOKEN.encode()).hexdigest()[:32] if WEBSOCKET_TOKEN else "",
+)
+# Query notation deliberately keeps the reverse-proxy location stable at /usp.
+# FRITZ!OS appends its endpoint ID to an existing query string correctly.
+WEBSOCKET_AGENT_PATH = f"{WEBSOCKET_PATH}?access={WEBSOCKET_PATH_KEY}" if WEBSOCKET_PATH_KEY else WEBSOCKET_PATH
 serializer = URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="usp-session")
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
 db_lock = threading.RLock()
@@ -1066,20 +1077,28 @@ def valid_websocket_credentials(authorization, query_token):
     return secrets.compare_digest(username, WEBSOCKET_USERNAME) and secrets.compare_digest(password, WEBSOCKET_TOKEN)
 
 
+@app.websocket(f"{WEBSOCKET_PATH}/{{access_key}}")
 @app.websocket(WEBSOCKET_PATH)
-async def usp_websocket(websocket: WebSocket):
+async def usp_websocket(websocket: WebSocket, access_key: str = ""):
     """TR-369 WebSocket MTP: binary USP Records using subprotocol v1.usp."""
     endpoint = websocket.query_params.get("eid", "")
     token = websocket.query_params.get("token", "")
     authorization = websocket.headers.get("authorization")
     protocols = websocket.headers.get("sec-websocket-protocol", "")
     credentials_valid = valid_websocket_credentials(authorization, token)
+    query_access_key = websocket.query_params.get("access", "")
+    path_valid = bool(
+        WEBSOCKET_PATH_KEY
+        and ((access_key and secrets.compare_digest(access_key, WEBSOCKET_PATH_KEY))
+             or (query_access_key and secrets.compare_digest(query_access_key, WEBSOCKET_PATH_KEY)))
+    )
+    credentials_valid = credentials_valid or path_valid
     if not valid_websocket_endpoint(endpoint) or not credentials_valid:
         logger.warning(
-            "USP WebSocket rejected: endpoint_valid=%s token_present=%s authorization_present=%s protocols=%s",
-            valid_websocket_endpoint(endpoint), bool(token), bool(authorization), protocols,
+            "USP WebSocket rejected: endpoint_valid=%s path_valid=%s token_present=%s authorization_present=%s protocols=%s",
+            valid_websocket_endpoint(endpoint), path_valid, bool(token), bool(authorization), protocols,
         )
-        if valid_websocket_endpoint(endpoint) and not token and not authorization:
+        if valid_websocket_endpoint(endpoint) and not access_key and not token and not authorization:
             # FRITZ!OS sends Basic credentials after receiving this standard challenge.
             await websocket.send_denial_response(
                 Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="USP Control"'})
@@ -1087,14 +1106,16 @@ async def usp_websocket(websocket: WebSocket):
         else:
             await websocket.close(code=1008)
         return
-    if "v1.usp" not in {item.strip() for item in protocols.split(",")}:
-        await websocket.close(code=1002)
-        return
-    await websocket.accept(subprotocol="v1.usp")
+    # FRITZ!OS omits Sec-WebSocket-Protocol even though it transports valid
+    # binary USP Records. Preserve standard v1.usp negotiation where offered.
+    if "v1.usp" in {item.strip() for item in protocols.split(",")}:
+        await websocket.accept(subprotocol="v1.usp")
+    else:
+        await websocket.accept()
     with websocket_agents_lock:
         websocket_agents[endpoint] = websocket
     await asyncio.to_thread(upsert_agent, endpoint, "1.3", "", "", "websocket")
-    await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_CONNECT", {"path": WEBSOCKET_PATH})
+    await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_CONNECT", {"path": websocket.url.path})
     try:
         while True:
             frame = await websocket.receive()
@@ -1385,8 +1406,8 @@ def controller_settings(request: Request):
         "mqtt_password_configured": bool(os.getenv("MQTT_CONTROLLER_PASSWORD")),
         "mqtt_connected": mqtt_connected,
         "websocket_enabled": bool(WEBSOCKET_TOKEN),
-        "websocket_path": WEBSOCKET_PATH,
-        "websocket_url": WEBSOCKET_PUBLIC_URL,
+        "websocket_path": WEBSOCKET_AGENT_PATH,
+        "websocket_url": f"{WEBSOCKET_PUBLIC_URL}?access={WEBSOCKET_PATH_KEY}" if WEBSOCKET_PUBLIC_URL and WEBSOCKET_PATH_KEY else WEBSOCKET_PUBLIC_URL,
         "live_paths": live_paths(),
         "live_poll_interval": poll_interval(),
         "genieacs_url": setting("genieacs_url", GENIEACS_DEFAULT),
