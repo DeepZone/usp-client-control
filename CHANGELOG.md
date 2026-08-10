@@ -4,6 +4,22 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.1] – 2026-08-11
+
+### Hinzugefügt
+
+- FRITZ!OS-kompatible HTTP-Basic-Authentifizierung für den USP-WebSocket-MTP; der konfigurierbare Benutzername ist standardmäßig `box`
+- vollständige Protokollierung der WebSocket-Verbindungsphasen ohne Geheimnisse sowie automatische Datenmodell-Synchronisierung nach einem `WebSocketConnectRecord`
+
+### Geändert
+
+- WebSocket-Verarbeitung nutzt `wsproto` für robuste, binäre USP-Verbindungen hinter Reverse-Proxies
+- Konfigurationstexte erklären die separate Eingabe von Host, Port, Pfad, Benutzername und Controller-Kennwort
+
+### Sicherheit
+
+- nicht authentifizierte WebSocket-Verbindungsversuche erhalten eine HTTP-401-Basic-Challenge; Zugriffstoken und Kennwörter werden weder protokolliert noch im Frontend preisgegeben
+
 ## [1.2.0] – 2026-08-10
 
 ### Hinzugefügt

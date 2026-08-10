@@ -1,7 +1,9 @@
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,7 +21,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.json_format import MessageToDict
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -38,6 +40,7 @@ AGENT_TOPIC_TEMPLATE = os.getenv("MQTT_AGENT_TOPIC_TEMPLATE", "usp/agent/[[EID]]
 WEBSOCKET_PATH = os.getenv("USP_WEBSOCKET_PATH", "/usp")
 WEBSOCKET_PUBLIC_URL = os.getenv("USP_WEBSOCKET_PUBLIC_URL", "")
 WEBSOCKET_TOKEN = os.getenv("USP_WEBSOCKET_TOKEN", "")
+WEBSOCKET_USERNAME = os.getenv("USP_WEBSOCKET_USERNAME", "box")
 serializer = URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="usp-session")
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
 db_lock = threading.RLock()
@@ -48,6 +51,7 @@ websocket_agents_lock = threading.RLock()
 main_loop = None
 live_clients = set()
 poller_task = None
+logger = logging.getLogger("usp.websocket")
 observed_agents = {}
 observed_agents_lock = threading.RLock()
 traffic_sample_messages = {}
@@ -1047,14 +1051,41 @@ def valid_websocket_endpoint(endpoint):
     return bool(re.fullmatch(r"[A-Za-z0-9:._!@+%-]{3,200}", endpoint or ""))
 
 
+def valid_websocket_credentials(authorization, query_token):
+    """Accept the legacy URL token and FRITZ!OS Basic authentication."""
+    if not WEBSOCKET_TOKEN:
+        return False
+    if query_token and secrets.compare_digest(query_token, WEBSOCKET_TOKEN):
+        return True
+    if not authorization or not authorization.startswith("Basic "):
+        return False
+    try:
+        username, password = base64.b64decode(authorization[6:], validate=True).decode("utf-8").split(":", 1)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return secrets.compare_digest(username, WEBSOCKET_USERNAME) and secrets.compare_digest(password, WEBSOCKET_TOKEN)
+
+
 @app.websocket(WEBSOCKET_PATH)
 async def usp_websocket(websocket: WebSocket):
     """TR-369 WebSocket MTP: binary USP Records using subprotocol v1.usp."""
     endpoint = websocket.query_params.get("eid", "")
     token = websocket.query_params.get("token", "")
+    authorization = websocket.headers.get("authorization")
     protocols = websocket.headers.get("sec-websocket-protocol", "")
-    if not WEBSOCKET_TOKEN or not valid_websocket_endpoint(endpoint) or not secrets.compare_digest(token, WEBSOCKET_TOKEN):
-        await websocket.close(code=1008)
+    credentials_valid = valid_websocket_credentials(authorization, token)
+    if not valid_websocket_endpoint(endpoint) or not credentials_valid:
+        logger.warning(
+            "USP WebSocket rejected: endpoint_valid=%s token_present=%s authorization_present=%s protocols=%s",
+            valid_websocket_endpoint(endpoint), bool(token), bool(authorization), protocols,
+        )
+        if valid_websocket_endpoint(endpoint) and not token and not authorization:
+            # FRITZ!OS sends Basic credentials after receiving this standard challenge.
+            await websocket.send_denial_response(
+                Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="USP Control"'})
+            )
+        else:
+            await websocket.close(code=1008)
         return
     if "v1.usp" not in {item.strip() for item in protocols.split(",")}:
         await websocket.close(code=1002)
@@ -1066,28 +1097,57 @@ async def usp_websocket(websocket: WebSocket):
     await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_CONNECT", {"path": WEBSOCKET_PATH})
     try:
         while True:
-            payload = await websocket.receive_bytes()
+            frame = await websocket.receive()
+            if frame["type"] == "websocket.disconnect":
+                logger.info("USP WebSocket disconnected: endpoint=%s code=%s", endpoint, frame.get("code"))
+                break
+            payload = frame.get("bytes")
+            if payload is None:
+                logger.warning("USP WebSocket received non-binary frame: endpoint=%s", endpoint)
+                await websocket.close(code=1003)
+                return
             wire_record = record_pb.Record()
             try:
                 wire_record.ParseFromString(payload)
-            except Exception:
+            except Exception as exc:
+                logger.warning("USP WebSocket received invalid record: endpoint=%s bytes=%s error=%s", endpoint, len(payload), exc)
                 await websocket.close(code=1003)
                 return
+            kind = wire_record.WhichOneof("record_type")
+            logger.info("USP WebSocket record: endpoint=%s kind=%s bytes=%s", endpoint, kind, len(payload))
             if wire_record.from_id and wire_record.from_id != endpoint:
+                logger.warning("USP WebSocket endpoint mismatch: requested=%s record=%s", endpoint, wire_record.from_id)
                 await websocket.close(code=1008)
                 return
             if wire_record.to_id and wire_record.to_id != ENDPOINT_ID:
+                logger.warning("USP WebSocket controller mismatch: received=%s expected=%s", wire_record.to_id, ENDPOINT_ID)
                 await websocket.close(code=1008)
                 return
+            if kind == "websocket_connect":
+                await asyncio.to_thread(upsert_agent, endpoint, wire_record.version or "1.3", "", "", "websocket")
+                await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_CONNECT_RECORD", {"version": wire_record.version})
+                try:
+                    # A WebSocket MTP has no broker-side connect callback that
+                    # would otherwise initiate discovery. Start the same model
+                    # synchronization used for a newly connected MQTT agent.
+                    await asyncio.to_thread(
+                        dispatch_job, endpoint, "get_supported_dm",
+                        {"paths": ["Device."], "first_level_only": False}, "system",
+                    )
+                except Exception as exc:
+                    logger.warning("USP WebSocket model sync could not start: endpoint=%s error=%s", endpoint, exc)
+                continue
             message_payload = extract_payload(wire_record)
             if message_payload:
                 await asyncio.to_thread(
                     handle_usp_message, endpoint, "websocket", "", wire_record.version or "1.3", message_payload, "websocket"
                 )
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        logger.info("USP WebSocket disconnected before/after record: endpoint=%s code=%s", endpoint, exc.code)
     except RuntimeError:
         pass
+    except Exception:
+        logger.exception("USP WebSocket processing failed: endpoint=%s", endpoint)
     finally:
         with websocket_agents_lock:
             if websocket_agents.get(endpoint) is websocket:

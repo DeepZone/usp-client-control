@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import tempfile
@@ -94,6 +95,17 @@ class LiveProfileTests(unittest.TestCase):
         self.assertTrue(app.valid_websocket_endpoint("os::00040E-123456789ABC"))
         self.assertFalse(app.valid_websocket_endpoint(""))
         self.assertFalse(app.valid_websocket_endpoint("invalid endpoint"))
+
+    def test_websocket_basic_authentication(self):
+        old_token, old_username = app.WEBSOCKET_TOKEN, app.WEBSOCKET_USERNAME
+        try:
+            app.WEBSOCKET_TOKEN, app.WEBSOCKET_USERNAME = "test-secret", "box"
+            authorization = "Basic " + base64.b64encode(b"box:test-secret").decode()
+            self.assertTrue(app.valid_websocket_credentials(authorization, ""))
+            invalid_authorization = "Basic " + base64.b64encode(b"box:wrong").decode()
+            self.assertFalse(app.valid_websocket_credentials(invalid_authorization, ""))
+        finally:
+            app.WEBSOCKET_TOKEN, app.WEBSOCKET_USERNAME = old_token, old_username
 
 
 if __name__ == "__main__":

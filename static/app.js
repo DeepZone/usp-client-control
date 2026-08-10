@@ -548,11 +548,11 @@ async function deleteCurrentAgent(){
 }
 
 // WebSocket is an additional USP MTP. MQTT configuration remains read-only
-// and unchanged; the URL is shown without exposing its agent access token.
+// and unchanged; the password is never exposed in the UI.
 const settingsWithWebSocket=settings;
 settings=async function(){
   await settingsWithWebSocket();
   const data=await api('/api/settings'),identity=$('.config-card');
   if(!identity)return;
-  identity.insertAdjacentHTML('afterend',`<section class="card config-card"><div class="card-head"><div><h2>USP über WebSocket</h2><p class="muted">Zusätzlicher TR-369-Transport neben dem unveränderten MQTT-Broker</p></div>${status(data.websocket_enabled?'Bereit':'Nicht konfiguriert',data.websocket_enabled?'good':'bad')}</div><div class="config-grid"><label>Öffentliche WebSocket-URL<input value="${esc(data.websocket_url||'Noch nicht hinterlegt')}" readonly></label><label>USP-Pfad<input value="${esc(data.websocket_path)}" readonly></label><label>Subprotocol<input value="v1.usp" readonly></label><label>Authentifizierung<input value="Endpoint-ID + Zugriffstoken" readonly></label></div><div class="notice">Für die FRITZ!Box wird die URL mit <code>?eid=&lt;Endpoint-ID&gt;&amp;token=…</code> ergänzt. Das Token wird niemals im Browser angezeigt. MQTT bleibt parallel aktiv und unverändert.</div></section>`)
+  identity.insertAdjacentHTML('afterend',`<section class="card config-card"><div class="card-head"><div><h2>USP über WebSocket</h2><p class="muted">Zusätzlicher TR-369-Transport neben dem unveränderten MQTT-Broker</p></div>${status(data.websocket_enabled?'Bereit':'Nicht konfiguriert',data.websocket_enabled?'good':'bad')}</div><div class="config-grid"><label>Öffentliche WebSocket-URL<input value="${esc(data.websocket_url||'Noch nicht hinterlegt')}" readonly></label><label>USP-Pfad<input value="${esc(data.websocket_path)}" readonly></label><label>Subprotocol<input value="v1.usp" readonly></label><label>Authentifizierung<input value="Benutzername + Kennwort" readonly></label></div><div class="notice">In FRITZ!OS werden Host, Port und Pfad getrennt eingetragen. Als Benutzername wird <code>box</code> verwendet; das Controller-Zugriffstoken gehört in das Feld „Neues Kennwort“. MQTT bleibt parallel aktiv und unverändert.</div></section>`)
 };
