@@ -483,7 +483,7 @@ def store_get_parameters(endpoint, response):
         with db() as connection:
             current = {row["path"]: row["value"] for row in connection.execute("SELECT path,value FROM parameters WHERE endpoint_id=?", (endpoint,)).fetchall()}
             history_rows = []
-            metric_pattern = re.compile(r"(Usage|Utilization|Bytes(?:Received|Sent)?|Packets|Power|SNR|RSRP|RSRQ|RSSI|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
+            metric_pattern = re.compile(r"(Usage|Utilization|CPUTime|Bytes(?:Received|Sent)?|Packets|Power|SNR|RSRP|RSRQ|RSSI|Rate|Latency|Errors|Timeouts?|UpTime|Free|Total|Current|Temperature|Signal|Noise|Quality|Speed|Load|Count)$", re.I)
             for _, path, value, updated in rows:
                 traffic_counter = path in {"Device.IP.Interface.1.Stats.BytesReceived", "Device.IP.Interface.1.Stats.BytesSent"}
                 radio_sample = re.search(r"(RSRP|RSRQ|RSSI)$", path, re.I)

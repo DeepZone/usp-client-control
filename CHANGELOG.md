@@ -4,6 +4,16 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.5] – 2026-08-11
+
+### Hinzugefügt
+
+- CPU-Analyse im Systembereich bewertet die aktuelle Last und ordnet besonders aktive Prozesse anhand der Änderung ihrer gemeldeten CPU-Zeit zu
+
+### Geändert
+
+- CPU-Zeit laufender Prozesse wird als Verlauf erfasst, sodass die Prozessbewertung bei weiteren Aktualisierungen präziser wird
+
 ## [1.2.4] – 2026-08-11
 
 ### Geändert

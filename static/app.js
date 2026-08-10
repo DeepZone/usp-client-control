@@ -546,3 +546,43 @@ async function deleteCurrentAgent(){
     await agents()
   }catch(error){toast(error.message,true)}
 }
+
+// CPU times are cumulative values. Comparing their most recent two samples
+// identifies work performed during the interval instead of mistaking a long
+// running, idle process for the current CPU consumer.
+function cpuSeconds(value){
+  if(value==null||value==='')return null;
+  const numeric=Number(value);if(Number.isFinite(numeric))return numeric;
+  const iso=String(value).match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+  if(iso)return Number(iso[1]||0)*3600+Number(iso[2]||0)*60+Number(iso[3]||0);
+  const parts=String(value).split(':').map(Number);
+  if(parts.length===3&&parts.every(Number.isFinite))return parts[0]*3600+parts[1]*60+parts[2];
+  if(parts.length===2&&parts.every(Number.isFinite))return parts[0]*60+parts[1];
+  return null
+}
+function processTitle(proc){return String(proc.Command||proc.Name||`Prozess ${proc.id}`).split(' ')[0].split('/').pop()||`Prozess ${proc.id}`}
+function cpuProcessAnalysis(history){
+  const current=new Map(instances('Device.DeviceInfo.ProcessStatus.Process.').map(proc=>[String(proc.id),proc]));
+  const byPath=new Map();
+  for(const row of history||[]){if(!/Device\.DeviceInfo\.ProcessStatus\.Process\.\d+\.CPUTime$/.test(row.path))continue;(byPath.get(row.path)||byPath.set(row.path,[]).get(row.path)).push(row)}
+  const result=[];
+  for(const [path,rows] of byPath){rows.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));const latest=rows.at(-1),previous=rows.at(-2),currentCpu=latest&&cpuSeconds(latest.value),previousCpu=previous&&cpuSeconds(previous.value);if(!latest||!previous||currentCpu==null||previousCpu==null)continue;const elapsed=(new Date(latest.created_at)-new Date(previous.created_at))/1000,delta=currentCpu-previousCpu,id=path.match(/Process\.(\d+)\.CPUTime$/)?.[1];if(!id||!current.has(id)||!Number.isFinite(delta)||elapsed<1||elapsed>7200||delta<0)continue;result.push({id,proc:current.get(id),share:Math.min(100,delta/elapsed*100),elapsed,updated:latest.created_at})}
+  return result.sort((a,b)=>b.share-a.share)
+}
+function cpuAnalysisMarkup(cpu,rows,loading=false){
+  const level=cpu>=85?'Kritisch':cpu>=65?'Erhöht':'Normal',kind=cpu>=85?'bad':cpu>=65?'warn':'good';
+  if(loading)return`<div class="empty">Prozessaktivität wird aus dem Verlauf berechnet …</div>`;
+  if(!rows.length)return`<div class="empty">${cpu>=65?'Die CPU-Auslastung ist erhöht. Für die Prozesszuordnung wird noch ein zweiter Prozess-Schnappschuss benötigt.':'Noch nicht genügend Prozessverlauf vorhanden. Bei der nächsten Systemaktualisierung wird die CPU-Aktivität je Prozess berechnet.'}</div>`;
+  return`<div class="cpu-analysis-summary"><div><small>CPU-Bewertung</small>${status(level,kind)}</div><div><small>Aktivster Prozess</small><strong>${esc(processTitle(rows[0].proc))}</strong></div><div><small>Aktueller Anteil</small><strong>${rows[0].share.toLocaleString('de-DE',{maximumFractionDigits:1})}%</strong></div></div><div class="table-scroll process-table"><table><thead><tr><th>Prozess</th><th>PID</th><th>CPU-Anteil im letzten Intervall</th><th>Messintervall</th><th>Stand</th></tr></thead><tbody>${rows.slice(0,8).map((row,index)=>`<tr class="${index===0&&cpu>=65?'process-hot':''}"><td><strong>${esc(processTitle(row.proc))}</strong><small>${esc(row.proc.Command||row.proc.Name||'')}</small></td><td>${esc(row.proc.PID||row.id)}</td><td><strong>${row.share.toLocaleString('de-DE',{maximumFractionDigits:1})}%</strong></td><td>${Math.round(row.elapsed)} s</td><td>${fmt(row.updated)}</td></tr>`).join('')}</tbody></table></div><p class="muted">Die Zuordnung basiert auf der Veränderung der CPU-Zeit zwischen zwei Prozess-Schnappschüssen, nicht auf der seit Systemstart aufgelaufenen CPU-Zeit.</p>`
+}
+function addCpuAnalysis(panel){
+  const cpu=Math.max(0,Math.min(100,Number(pv('Device.DeviceInfo.ProcessStatus.CPUUsage',0))||0));
+  panel.insertAdjacentHTML('beforeend',`<section class="card cpu-analysis-card"><div class="card-head"><div><h2>CPU-Analyse</h2><p class="muted">Aktuelle Last bewerten und besonders aktive Prozesse identifizieren</p></div><button class="secondary" id="cpu-analysis-refresh">Analyse aktualisieren</button></div><div id="cpu-analysis-content">${cpuAnalysisMarkup(cpu,[],true)}</div></section>`);
+  $('#cpu-analysis-refresh').onclick=()=>{refreshSystem();loadCpuAnalysis()};loadCpuAnalysis()
+}
+async function loadCpuAnalysis(){
+  if(!state.agent)return;const target=$('#cpu-analysis-content');if(!target)return;
+  try{const endpoint=state.agent.agent.endpoint_id,data=await api(`/api/agents/${encodeURIComponent(endpoint)}/history?path=${encodeURIComponent('Device.DeviceInfo.ProcessStatus.Process.')}&hours=24`);if(target.isConnected)target.innerHTML=cpuAnalysisMarkup(Math.max(0,Math.min(100,Number(pv('Device.DeviceInfo.ProcessStatus.CPUUsage',0))||0)),cpuProcessAnalysis(data.values))}catch(error){if(target.isConnected)target.innerHTML=`<div class="empty">CPU-Analyse konnte nicht geladen werden: ${esc(error.message)}</div>`}
+}
+const renderSystemWithCpuAnalysis=renderSystem;
+renderSystem=function(panel){renderSystemWithCpuAnalysis(panel);addCpuAnalysis(panel)};
