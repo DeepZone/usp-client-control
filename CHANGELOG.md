@@ -4,6 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.8] – 2026-08-11
+
+### Geändert
+
+- Systemwerte und Prozessliste werden bei Live-Meldungen direkt im bestehenden DOM ausgetauscht; die CPU-Analyse bleibt dabei sichtbar und behält ihren Ladezustand sowie ihre Ergebnisse
+
 ## [1.2.7] – 2026-08-11
 
 ### Behoben
