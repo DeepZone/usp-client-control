@@ -35,11 +35,16 @@ DB_PATH = os.getenv("DATABASE_PATH", "/data/controller.db")
 ENDPOINT_ID = os.getenv("CONTROLLER_ENDPOINT_ID", "usp:noisens:controller")
 CONTROLLER_TOPIC = os.getenv("MQTT_CONTROLLER_TOPIC", "usp/controller")
 AGENT_TOPIC_TEMPLATE = os.getenv("MQTT_AGENT_TOPIC_TEMPLATE", "usp/agent/[[EID]]")
+WEBSOCKET_PATH = os.getenv("USP_WEBSOCKET_PATH", "/usp")
+WEBSOCKET_PUBLIC_URL = os.getenv("USP_WEBSOCKET_PUBLIC_URL", "")
+WEBSOCKET_TOKEN = os.getenv("USP_WEBSOCKET_TOKEN", "")
 serializer = URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="usp-session")
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
 db_lock = threading.RLock()
 mqtt_client = None
 mqtt_connected = False
+websocket_agents = {}
+websocket_agents_lock = threading.RLock()
 main_loop = None
 live_clients = set()
 poller_task = None
@@ -418,15 +423,24 @@ def current_user(request: Request, admin=False):
     return dict(user)
 
 
-def upsert_agent(endpoint, version="", reply_topic="", mqtt_topic="", **identity):
+def upsert_agent(endpoint, version="", reply_topic="", mqtt_topic="", transport="mqtt", **identity):
     timestamp = now()
     with db() as connection:
-        existing = connection.execute("SELECT endpoint_id FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+        existing = connection.execute("SELECT endpoint_id,remote_meta FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
         if existing:
-            connection.execute("UPDATE agents SET protocol_version=COALESCE(NULLIF(?,''),protocol_version),reply_topic=COALESCE(NULLIF(?,''),reply_topic),mqtt_topic=?,last_seen=?,online=1,oui=COALESCE(NULLIF(?,''),oui),product_class=COALESCE(NULLIF(?,''),product_class),serial_number=COALESCE(NULLIF(?,''),serial_number) WHERE endpoint_id=?", (version, reply_topic, mqtt_topic, timestamp, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), endpoint))
+            try:
+                remote_meta = json.loads(existing["remote_meta"] or "{}")
+            except json.JSONDecodeError:
+                remote_meta = {}
+            transports = set(remote_meta.get("transports") or [])
+            transports.add(transport)
+            remote_meta["transports"] = sorted(transports)
+            remote_meta[f"{transport}_last_seen"] = timestamp
+            connection.execute("UPDATE agents SET protocol_version=COALESCE(NULLIF(?,''),protocol_version),reply_topic=COALESCE(NULLIF(?,''),reply_topic),mqtt_topic=COALESCE(NULLIF(?,''),mqtt_topic),last_seen=?,online=1,oui=COALESCE(NULLIF(?,''),oui),product_class=COALESCE(NULLIF(?,''),product_class),serial_number=COALESCE(NULLIF(?,''),serial_number),remote_meta=? WHERE endpoint_id=?", (version, reply_topic, mqtt_topic, timestamp, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), json.dumps(remote_meta, ensure_ascii=False), endpoint))
         else:
-            connection.execute("INSERT INTO agents(endpoint_id,protocol_version,reply_topic,oui,product_class,serial_number,first_seen,last_seen,online,mqtt_topic) VALUES(?,?,?,?,?,?,?,?,1,?)", (endpoint, version, reply_topic, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), timestamp, timestamp, mqtt_topic))
-    emit_live("agent", endpoint, {"last_seen": timestamp, "online": True, "protocol_version": version})
+            remote_meta = {"transports": [transport], f"{transport}_last_seen": timestamp}
+            connection.execute("INSERT INTO agents(endpoint_id,protocol_version,reply_topic,oui,product_class,serial_number,first_seen,last_seen,online,mqtt_topic,remote_meta) VALUES(?,?,?,?,?,?,?,?,1,?,?)", (endpoint, version, reply_topic, identity.get("oui", ""), identity.get("product_class", ""), identity.get("serial_number", ""), timestamp, timestamp, mqtt_topic, json.dumps(remote_meta, ensure_ascii=False)))
+    emit_live("agent", endpoint, {"last_seen": timestamp, "online": True, "protocol_version": version, "transport": transport})
 
 
 def extract_payload(record):
@@ -532,7 +546,7 @@ async def traffic_sampler(interval, observed):
                     message = build_message("get", {"paths": paths, "max_depth": 0})
                     with traffic_sample_messages_lock:
                         traffic_sample_messages[message.header.msg_id] = time.time()
-                    publish_message(agent["endpoint_id"], agent["reply_topic"] or agent_topic(agent["endpoint_id"]), message, agent["protocol_version"] or "1.3")
+                    send_usp_message(agent["endpoint_id"], message, agent["protocol_version"] or "1.3")
                 except Exception:
                     if message is not None:
                         with traffic_sample_messages_lock:
@@ -586,15 +600,38 @@ def store_supported_model(endpoint, response):
             record_event(endpoint, "MODEL_REFRESH_ERROR", {"error": str(exc)})
 
 
-def send_notify_response(endpoint, topic, msg_id, subscription_id, version):
+def websocket_agent_connected(endpoint):
+    with websocket_agents_lock:
+        return endpoint in websocket_agents
+
+
+async def send_websocket_record(endpoint, wire_record):
+    with websocket_agents_lock:
+        websocket = websocket_agents.get(endpoint)
+    if not websocket:
+        raise RuntimeError("WebSocket-Agent nicht verbunden")
+    await websocket.send_bytes(wire_record)
+
+
+def publish_websocket_message(endpoint, message, version="1.3"):
+    if not main_loop or not main_loop.is_running():
+        raise RuntimeError("WebSocket-Endpunkt nicht bereit")
+    wire_record = record_pb.Record(version=version or "1.3", to_id=endpoint, from_id=ENDPOINT_ID,
+                                   payload_security=record_pb.Record.PLAINTEXT)
+    wire_record.no_session_context.payload = message.SerializeToString()
+    future = asyncio.run_coroutine_threadsafe(send_websocket_record(endpoint, wire_record.SerializeToString()), main_loop)
+    future.result(timeout=10)
+
+
+def send_notify_response(endpoint, topic, msg_id, subscription_id, version, transport="mqtt"):
     message = usp.Msg()
     message.header.msg_id = msg_id
     message.header.msg_type = usp.Header.NOTIFY_RESP
     message.body.response.notify_resp.subscription_id = subscription_id
-    publish_message(endpoint, topic, message, version)
+    send_usp_message(endpoint, message, version, transport, topic)
 
 
-def handle_usp_message(endpoint, topic, reply_topic, version, payload):
+def handle_usp_message(endpoint, topic, reply_topic, version, payload, transport="mqtt"):
     message = usp.Msg()
     message.ParseFromString(payload)
     body_type = message.body.WhichOneof("msg_body")
@@ -675,8 +712,8 @@ def handle_usp_message(endpoint, topic, reply_topic, version, payload):
                 "command_key": operation.command_key,
                 "result": data,
             })
-        if notification.send_resp and reply_topic:
-            send_notify_response(endpoint, reply_topic, message.header.msg_id, notification.subscription_id, version)
+        if notification.send_resp:
+            send_notify_response(endpoint, reply_topic, message.header.msg_id, notification.subscription_id, version, transport)
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -700,13 +737,13 @@ def on_message(client, userdata, mqtt_message):
         kind = record.WhichOneof("record_type")
         if kind == "mqtt_connect":
             reply_topic = record.mqtt_connect.subscribed_topic or reply_topic
-            upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic)
+            upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic, "mqtt")
             record_event(endpoint, "MQTT_CONNECT", {"version": record.version, "reply_topic": reply_topic})
             return
-        upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic)
+        upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic, "mqtt")
         payload = extract_payload(record)
         if payload:
-            handle_usp_message(endpoint, mqtt_message.topic, reply_topic or agent_topic(endpoint), record.version, payload)
+            handle_usp_message(endpoint, mqtt_message.topic, reply_topic or agent_topic(endpoint), record.version, payload, "mqtt")
     except Exception as exc:
         record_event(None, "DECODE_ERROR", {"topic": mqtt_message.topic, "error": str(exc)})
 
@@ -730,6 +767,30 @@ def publish_message(endpoint, topic, message, version="1.3"):
     result = mqtt_client.publish(topic, record.SerializeToString(), qos=1, properties=properties)
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         raise RuntimeError(f"MQTT Publish fehlgeschlagen: {result.rc}")
+
+
+def send_usp_message(endpoint, message, version="1.3", transport="auto", topic=""):
+    """Send one USP record without changing the established MQTT path."""
+    with db() as connection:
+        row = connection.execute("SELECT mqtt_topic,reply_topic FROM agents WHERE endpoint_id=?", (endpoint,)).fetchone()
+    mqtt_available = bool(mqtt_connected and row and row["mqtt_topic"])
+    mqtt_topic = topic or (row["reply_topic"] if row else "") or agent_topic(endpoint)
+    websocket_available = websocket_agent_connected(endpoint)
+    if transport == "mqtt":
+        return publish_message(endpoint, mqtt_topic, message, version)
+    if transport == "websocket":
+        return publish_websocket_message(endpoint, message, version)
+    # Existing MQTT agents continue to use their current broker route. A
+    # WebSocket-only agent is selected only when no MQTT transport is known.
+    if mqtt_available:
+        try:
+            return publish_message(endpoint, mqtt_topic, message, version)
+        except Exception:
+            if not websocket_available:
+                raise
+    if websocket_available:
+        return publish_websocket_message(endpoint, message, version)
+    raise RuntimeError("Kein erreichbarer USP-Transport (MQTT oder WebSocket)")
 
 
 def build_message(action, payload):
@@ -798,7 +859,7 @@ async def live_poll_loop():
     while True:
         interval = poll_interval()
         try:
-            if mqtt_connected:
+            if mqtt_connected or websocket_agents:
                 online_cutoff = datetime.fromtimestamp(time.time() - 15 * 60, timezone.utc).isoformat()
                 pending_cutoff = datetime.fromtimestamp(time.time() - max(interval, 30), timezone.utc).isoformat()
                 with db() as connection:
@@ -976,7 +1037,62 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": VERSION, "mqtt": mqtt_connected, "endpoint_id": ENDPOINT_ID}
+    with websocket_agents_lock:
+        websocket_count = len(websocket_agents)
+    return {"ok": True, "version": VERSION, "mqtt": mqtt_connected, "websocket_agents": websocket_count,
+            "websocket_enabled": bool(WEBSOCKET_TOKEN), "endpoint_id": ENDPOINT_ID}
+
+
+def valid_websocket_endpoint(endpoint):
+    return bool(re.fullmatch(r"[A-Za-z0-9:._!@+%-]{3,200}", endpoint or ""))
+
+
+@app.websocket(WEBSOCKET_PATH)
+async def usp_websocket(websocket: WebSocket):
+    """TR-369 WebSocket MTP: binary USP Records using subprotocol v1.usp."""
+    endpoint = websocket.query_params.get("eid", "")
+    token = websocket.query_params.get("token", "")
+    protocols = websocket.headers.get("sec-websocket-protocol", "")
+    if not WEBSOCKET_TOKEN or not valid_websocket_endpoint(endpoint) or not secrets.compare_digest(token, WEBSOCKET_TOKEN):
+        await websocket.close(code=1008)
+        return
+    if "v1.usp" not in {item.strip() for item in protocols.split(",")}:
+        await websocket.close(code=1002)
+        return
+    await websocket.accept(subprotocol="v1.usp")
+    with websocket_agents_lock:
+        websocket_agents[endpoint] = websocket
+    await asyncio.to_thread(upsert_agent, endpoint, "1.3", "", "", "websocket")
+    await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_CONNECT", {"path": WEBSOCKET_PATH})
+    try:
+        while True:
+            payload = await websocket.receive_bytes()
+            wire_record = record_pb.Record()
+            try:
+                wire_record.ParseFromString(payload)
+            except Exception:
+                await websocket.close(code=1003)
+                return
+            if wire_record.from_id and wire_record.from_id != endpoint:
+                await websocket.close(code=1008)
+                return
+            if wire_record.to_id and wire_record.to_id != ENDPOINT_ID:
+                await websocket.close(code=1008)
+                return
+            message_payload = extract_payload(wire_record)
+            if message_payload:
+                await asyncio.to_thread(
+                    handle_usp_message, endpoint, "websocket", "", wire_record.version or "1.3", message_payload, "websocket"
+                )
+    except WebSocketDisconnect:
+        pass
+    except RuntimeError:
+        pass
+    finally:
+        with websocket_agents_lock:
+            if websocket_agents.get(endpoint) is websocket:
+                websocket_agents.pop(endpoint, None)
+        await asyncio.to_thread(record_event, endpoint, "WEBSOCKET_DISCONNECT", {"path": WEBSOCKET_PATH})
 
 
 @app.websocket("/api/live")
@@ -1208,6 +1324,9 @@ def controller_settings(request: Request):
         "mqtt_username": os.getenv("MQTT_CONTROLLER_USERNAME", "controller"),
         "mqtt_password_configured": bool(os.getenv("MQTT_CONTROLLER_PASSWORD")),
         "mqtt_connected": mqtt_connected,
+        "websocket_enabled": bool(WEBSOCKET_TOKEN),
+        "websocket_path": WEBSOCKET_PATH,
+        "websocket_url": WEBSOCKET_PUBLIC_URL,
         "live_paths": live_paths(),
         "live_poll_interval": poll_interval(),
         "genieacs_url": setting("genieacs_url", GENIEACS_DEFAULT),
@@ -1539,7 +1658,7 @@ def dispatch_job(endpoint, action, payload, actor="system"):
     with db() as connection:
         connection.execute("INSERT INTO jobs(msg_id,endpoint_id,action,request_json,state,created_at) VALUES(?,?,?,?,?,?)", (message.header.msg_id, endpoint, action, json.dumps(stored_payload, ensure_ascii=False), "queued", now()))
     try:
-        publish_message(endpoint, topic, message, agent_row["protocol_version"] or "1.3")
+        send_usp_message(endpoint, message, agent_row["protocol_version"] or "1.3", "auto", topic)
         with db() as connection:
             connection.execute("UPDATE jobs SET state='sent' WHERE msg_id=?", (message.header.msg_id,))
     except Exception as exc:
@@ -1548,7 +1667,8 @@ def dispatch_job(endpoint, action, payload, actor="system"):
         raise
     if actor != "system":
         audit(actor, f"USP {action}", endpoint, json.dumps(stored_payload, ensure_ascii=False))
-    return {"ok": True, "msg_id": message.header.msg_id, "topic": topic}
+    return {"ok": True, "msg_id": message.header.msg_id, "topic": topic,
+            "transport": "mqtt" if mqtt_connected else "websocket"}
 
 
 @app.post("/api/agents/{endpoint}/jobs")

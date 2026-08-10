@@ -4,6 +4,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.0] – 2026-08-10
+
+### Hinzugefügt
+
+- zusätzlicher TR-369-WebSocket-MTP unter `/usp` mit binären USP-Records und dem vorgeschriebenen Subprotocol `v1.usp`
+- abgesicherte Agentenidentifikation über Endpoint-ID und ein serverseitiges Zugriffstoken
+- paralleler Betrieb von MQTT und WebSocket; vorhandene MQTT-Routen bleiben unverändert bevorzugt
+
 ## [1.1.2] – 2026-08-05
 
 ### Hinzugefügt

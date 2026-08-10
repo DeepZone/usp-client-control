@@ -79,6 +79,22 @@ class LiveProfileTests(unittest.TestCase):
             self.assertIsNone(connection.execute("SELECT 1 FROM agents WHERE endpoint_id='agent'").fetchone())
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM parameters WHERE endpoint_id='agent'").fetchone()[0], 0)
 
+    def test_websocket_presence_does_not_overwrite_mqtt_route(self):
+        timestamp = app.now()
+        with app.db() as connection:
+            connection.execute("UPDATE agents SET mqtt_topic=?,reply_topic=? WHERE endpoint_id=?", ("usp/agent/agent", "usp/reply/agent", "agent"))
+        app.upsert_agent("agent", "1.3", transport="websocket")
+        with app.db() as connection:
+            row = connection.execute("SELECT mqtt_topic,reply_topic,remote_meta FROM agents WHERE endpoint_id='agent'").fetchone()
+        self.assertEqual(row["mqtt_topic"], "usp/agent/agent")
+        self.assertEqual(row["reply_topic"], "usp/reply/agent")
+        self.assertIn("websocket", json.loads(row["remote_meta"])["transports"])
+
+    def test_websocket_endpoint_validation(self):
+        self.assertTrue(app.valid_websocket_endpoint("os::00040E-123456789ABC"))
+        self.assertFalse(app.valid_websocket_endpoint(""))
+        self.assertFalse(app.valid_websocket_endpoint("invalid endpoint"))
+
 
 if __name__ == "__main__":
     unittest.main()
