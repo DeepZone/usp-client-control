@@ -418,7 +418,7 @@ function patchLiveSection(){
   // These views already receive direct cell updates or are changed explicitly
   // by the user. Rebuilding their potentially very large tables would only add
   // work and could disturb an active form.
-  if(['internet','parameters','jobs','events','actions','history'].includes(state.section)){patchClientDrawerLive();return}
+  if(['internet','system','parameters','jobs','events','actions','history'].includes(state.section)){patchClientDrawerLive();return}
   const view=captureViewPosition(),snapshot=buildSectionSnapshot();if(!snapshot)return;
   morphLiveDom(current,snapshot);bindDynamicLiveNodes();patchClientDrawerLive();restoreViewPosition(view)
 }
@@ -578,9 +578,8 @@ function cpuAnalysisMarkup(cpu,rows,loading=false){
 function addCpuAnalysis(panel){
   const cpu=Math.max(0,Math.min(100,Number(pv('Device.DeviceInfo.ProcessStatus.CPUUsage',0))||0));
   panel.insertAdjacentHTML('beforeend',`<section class="card cpu-analysis-card"><div class="card-head"><div><h2>CPU-Analyse</h2><p class="muted">Aktuelle Last bewerten und besonders aktive Prozesse identifizieren</p></div><button class="secondary" id="cpu-analysis-refresh">Analyse aktualisieren</button></div><div id="cpu-analysis-content">${cpuAnalysisMarkup(cpu,[],true)}</div></section>`);
-  $('#cpu-analysis-refresh').onclick=()=>{refreshSystem();targetCpuAnalysisLoading();scheduleCpuAnalysisUpdate(1800)};loadCpuAnalysis()
+  $('#cpu-analysis-refresh').onclick=()=>{refreshSystem();scheduleCpuAnalysisUpdate(1800)};loadCpuAnalysis()
 }
-function targetCpuAnalysisLoading(){const target=$('#cpu-analysis-content');if(target)target.innerHTML=cpuAnalysisMarkup(Math.max(0,Math.min(100,Number(pv('Device.DeviceInfo.ProcessStatus.CPUUsage',0))||0)),[],true)}
 function scheduleCpuAnalysisUpdate(delay=450){clearTimeout(state.cpuAnalysisTimer);state.cpuAnalysisTimer=setTimeout(()=>{if(state.section==='system')loadCpuAnalysis()},delay)}
 async function loadCpuAnalysis(){
   if(!state.agent)return;const target=$('#cpu-analysis-content');if(!target)return;
