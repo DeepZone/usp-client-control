@@ -4,6 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.9] – 2026-08-12
+
+### Hinzugefügt
+
+- feststehendes, dezentes FRITZ!Box-Motiv in der rechten unteren Ecke als transparenter Hintergrund der Oberfläche
+
 ## [1.2.8] – 2026-08-11
 
 ### Geändert
