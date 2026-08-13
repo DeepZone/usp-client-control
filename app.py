@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +55,10 @@ WEBSOCKET_PATH_KEY = os.getenv(
 WEBSOCKET_AGENT_PATH = f"{WEBSOCKET_PATH}?access={WEBSOCKET_PATH_KEY}" if WEBSOCKET_PATH_KEY else WEBSOCKET_PATH
 serializer = URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="usp-session")
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
-db_lock = threading.RLock()
+# SQLite in WAL mode permits UI reads while larger agent updates (especially a
+# first GetSupportedDM response) are written. Do not serialize every request
+# behind one process-wide lock: that made the UI wait for a new agent's model.
+message_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="usp-inbound")
 mqtt_client = None
 mqtt_connected = False
 websocket_agents = {}
@@ -99,21 +103,21 @@ def now():
 
 @contextmanager
 def db():
-    with db_lock:
-        connection = sqlite3.connect(DB_PATH)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
+    connection = sqlite3.connect(DB_PATH, timeout=8)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout=8000")
+    connection.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def initialize_database():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with db() as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
         connection.executescript("""
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS agents(endpoint_id TEXT PRIMARY KEY, protocol_version TEXT, reply_topic TEXT, oui TEXT, product_class TEXT, serial_number TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, online INTEGER NOT NULL DEFAULT 1, mqtt_topic TEXT, remote_meta TEXT DEFAULT '{}');
@@ -743,24 +747,33 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     mqtt_connected = False
 
 
-def on_message(client, userdata, mqtt_message):
+def process_mqtt_message(topic, wire_record, response_topic):
     try:
         record = record_pb.Record()
-        record.ParseFromString(mqtt_message.payload)
+        record.ParseFromString(wire_record)
         endpoint = record.from_id
-        reply_topic = getattr(mqtt_message.properties, "ResponseTopic", None) or ""
+        reply_topic = response_topic or ""
         kind = record.WhichOneof("record_type")
         if kind == "mqtt_connect":
             reply_topic = record.mqtt_connect.subscribed_topic or reply_topic
-            upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic, "mqtt")
+            upsert_agent(endpoint, record.version, reply_topic, topic, "mqtt")
             record_event(endpoint, "MQTT_CONNECT", {"version": record.version, "reply_topic": reply_topic})
             return
-        upsert_agent(endpoint, record.version, reply_topic, mqtt_message.topic, "mqtt")
+        upsert_agent(endpoint, record.version, reply_topic, topic, "mqtt")
         payload = extract_payload(record)
         if payload:
-            handle_usp_message(endpoint, mqtt_message.topic, reply_topic or agent_topic(endpoint), record.version, payload, "mqtt")
+            handle_usp_message(endpoint, topic, reply_topic or agent_topic(endpoint), record.version, payload, "mqtt")
     except Exception as exc:
-        record_event(None, "DECODE_ERROR", {"topic": mqtt_message.topic, "error": str(exc)})
+        record_event(None, "DECODE_ERROR", {"topic": topic, "error": str(exc)})
+
+
+def on_message(client, userdata, mqtt_message):
+    """Keep Paho's network loop short; schema onboarding is processed off-loop."""
+    response_topic = getattr(mqtt_message.properties, "ResponseTopic", None) or ""
+    try:
+        message_executor.submit(process_mqtt_message, mqtt_message.topic, bytes(mqtt_message.payload), response_topic)
+    except RuntimeError as exc:
+        record_event(None, "INBOUND_QUEUE_ERROR", {"topic": mqtt_message.topic, "error": str(exc)})
 
 
 def agent_topic(endpoint):

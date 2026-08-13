@@ -4,6 +4,13 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.12] – 2026-08-14
+
+### Behoben
+
+- Erstanmeldung und umfangreiche Datenmodellantworten neuer USP-Agenten laufen außerhalb des MQTT-Netzwerk-Callbacks
+- SQLite verwendet WAL mit Wartezeit für konkurrierende Zugriffe; die Weboberfläche bleibt während der Datenmodellsynchronisierung lesbar und bedienbar
+
 ## [1.2.11] – 2026-08-13
 
 ### Geändert
