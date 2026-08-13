@@ -4,6 +4,16 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.11] – 2026-08-13
+
+### Geändert
+
+- Telefonie-&-DECT-Bearbeitung logisch gruppiert und mit beschrifteten Aktionen für Aktivierung, Rufnummer/URI, Benutzername, Registrar und Proxy versehen
+
+### Behoben
+
+- Toast-Hinweise liegen wieder sichtbar über allen Infoboxen und anderen Oberflächenelementen
+
 ## [1.2.10] – 2026-08-12
 
 ### Geändert
