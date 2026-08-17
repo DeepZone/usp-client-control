@@ -10,6 +10,7 @@
     <img alt="USP TR-369" src="https://img.shields.io/badge/USP-TR--369-0d9488">
     <img alt="MQTT 5" src="https://img.shields.io/badge/MQTT-5.0-660066?logo=mqtt">
     <img alt="Lizenz: Nutzung erlaubt, Änderungen verboten" src="https://img.shields.io/badge/Lizenz-Nutzung_erlaubt%20%C2%B7%20keine_%C3%84nderungen-7c3aed">
+    <a href="https://buymeacoffee.com/mail9l"><img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20me%20a%20coffee-Unterst%C3%BCtzen-FFDD00?logo=buymeacoffee&logoColor=000000"></a>
   </p>
 </div>
 
@@ -20,6 +21,8 @@ Der Schwerpunkt liegt auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet
 > **Projektstatus: stabile Version 1.2.12.** Die Kernfunktionen arbeiten in einer realen Testumgebung. Modellabhängige USP-Pfade, unterschiedliche FRITZ!OS-Freigaben und Providerprofile sollten vor einem breiten Rollout weiterhin mit den vorgesehenen Gerätemodellen validiert werden.
 
 Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
+
+> Gefällt dir USP Control? [Unterstütze die Weiterentwicklung mit einem Kaffee.](https://buymeacoffee.com/mail9l)
 
 ## Einblick
 
