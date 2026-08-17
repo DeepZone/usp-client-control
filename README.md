@@ -22,8 +22,6 @@ Der Schwerpunkt liegt auf **AVM FRITZ!Box Cable, DSL, Mobile, Fiber und Ethernet
 
 Siehe auch [Changelog](CHANGELOG.md) und [Lizenz](LICENSE.md).
 
-> Gefällt dir USP Control? [Unterstütze die Weiterentwicklung mit einem Kaffee.](https://buymeacoffee.com/mail9l)
-
 ## Einblick
 
 ![USP Control – TR-369- und USP-Controller-Übersicht](docs/usp-client-control-overview.png)
