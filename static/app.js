@@ -278,7 +278,7 @@ function wifiHostDetails(host){
   if(!base)return null;
   const rows=state.agent.parameters.filter(item=>item.path.startsWith(base+'.'));
   const media=rows.filter(item=>item.path.endsWith('.MediaType')).map(item=>item.value);
-  if(!media.some(value=>/802\.11|wifi/i.test(value)))return null;
+  if(!media.some(value=>isWifiValue(value)))return null;
   const valueEnding=ending=>rows.find(item=>item.path.endsWith(ending))?.value;
   const numericEnding=ending=>rows.filter(item=>item.path.endsWith(ending)).map(item=>Number(item.value)).filter(Number.isFinite);
   const phy=numericEnding('.PHYRate'),rx=numericEnding('.X_AVM-DE_PHYRateRX'),tx=numericEnding('.X_AVM-DE_PHYRateTX');
@@ -305,7 +305,7 @@ function associatedClient(host){
   const numbers=ending=>Object.entries(values).filter(([key])=>key.endsWith(ending)).map(([,value])=>Number(value)).filter(Number.isFinite);
   const max=ending=>{const result=numbers(ending);return result.length?Math.max(...result):null},validMax=ending=>{const result=numbers(ending).filter(value=>value>=0&&value<254);return result.length?Math.max(...result):null};
   const first=ending=>Object.entries(values).find(([key])=>key.endsWith(ending))?.[1];
-  const wifi=media.some(value=>/802\.11|wifi/i.test(value));
+  const wifi=media.some(value=>isWifiValue(value));
   const trafficRxPath=`Device.Hosts.Host.${host.id}.WANStats.BytesReceived`,trafficTxPath=`Device.Hosts.Host.${host.id}.WANStats.BytesSent`;
   const rxCounter=paramMap().get(trafficRxPath),txCounter=paramMap().get(trafficTxPath);
   return{base,rows,values,media,wifi,phy:max('PHYRate'),rx:max('X_AVM-DE_PHYRateRX'),tx:max('X_AVM-DE_PHYRateTX'),mac:max('MACThroughputCapacity'),macRx:max('X_AVM-DE_MACThroughputCapacityRX'),macTx:max('X_AVM-DE_MACThroughputCapacityTX'),latency:Number(first('RTLatency'))||null,availability:validMax('LinkAvailability'),rssi:validMax('RSSI'),rcpi:validMax('X_AVM-DE_RCPI'),channelUtilization:validMax('X_AVM-DE_ChannelUtilization'),interfaceName:first('X_AVM-DE_Name')||'',ssid:first('X_AVM-DE_SSID')||'',learnedViaLldp:first('X_AVM-DE_LearnedViaLLDP')||'',meshRole:first('X_AVM-DE_MeshRole')||'',deviceClass:first('X_AVM-DE_DeviceClass')||'',softwareVersion:first('X_AVM-DE_SoftwareVersion')||'',lastUpdate:first('LastUpdate')||'',trafficRx:Number(rxCounter?.value)||0,trafficTx:Number(txCounter?.value)||0,trafficUpdated:rxCounter?.updated_at||txCounter?.updated_at||''};
@@ -357,7 +357,7 @@ function topologyMedium(host,link){
   // current FRITZ!OS builds. IEEE-1905 link data may arrive later, so it
   // must not be the sole source for the topology grouping.
   const values=[...(link?.media||[]),host.Layer1Interface||'',host.InterfaceType||'',host.X_AVM_DE_Interface||''].join(' ');
-  if(link?.wifi||/802\.11|wifi|wlan/i.test(values))return'WLAN';
+  if(link?.wifi||isWifiValue(values))return'WLAN';
   if(/1901|powerline|plc/i.test(values))return'Powerline';
   return'LAN'
 }
@@ -612,16 +612,17 @@ function wifiAssociatedMacs(){
   }
   return macs
 }
+function isWifiValue(value){return /Device\.WiFi|802\.11|\bwi[-\s]?fi\b|\bwlan\b/i.test(String(value||''))}
 function isWifiHost(host,link){
   const layer=[host.Layer1Interface,host.AssociatedDevice,host.InterfaceType,host.X_AVM_DE_Interface].filter(Boolean).join(' ');
-  if(/Device\.WiFi|802\.11|\bwifi\b|\bwlan\b/i.test(layer))return true;
+  if(isWifiValue(layer))return true;
   return wifiAssociatedMacs().has(normalizedMac(host.PhysAddress))||Boolean(link?.wifi)
 }
 associatedClient=function(host){
   const link=associatedClientBase(host);
   if(isWifiHost(host,link)){
     link.wifi=true;
-    if(!link.media.some(value=>/802\.11|wifi|wlan/i.test(String(value))))link.media.push('IEEE 802.11');
+    if(!link.media.some(value=>isWifiValue(value)))link.media.push('IEEE 802.11');
   }
   return link
 };

@@ -4,6 +4,13 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.16] – 2026-08-19
+
+### Behoben
+
+- die FRITZ!OS-Kennung `Wi-Fi` wird nun genauso wie `WiFi`, `WLAN` und IEEE 802.11 als WLAN erkannt
+- die zentrale Duplikatbereinigung kann damit WLAN-Einträge zuverlässig gegenüber parallelen generischen oder Ethernet-Hostmeldungen priorisieren
+
 ## [1.2.15] – 2026-08-19
 
 ### Behoben
