@@ -4,6 +4,12 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.14] – 2026-08-19
+
+### Behoben
+
+- die Mesh-Gruppierung berücksichtigt nun den direkt von FRITZ!OS gelieferten Host-Schnittstellentyp; WLAN-Clients erscheinen dadurch unmittelbar unter „WLAN-Geräte“ statt unter „LAN-Geräte“
+
 ## [1.2.13] – 2026-08-19
 
 ### Behoben

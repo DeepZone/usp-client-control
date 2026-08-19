@@ -352,7 +352,15 @@ renderWifi=function(panel){
   panel.innerHTML=`<div class="section-title"><div><h2>WLAN</h2><p>Funknetze, Frequenzbereiche, Kanäle und Sicherheit</p></div><span class="live-pill good">Live</span></div><div class="radio-grid">${radios.map(radio=>{const channels=String(radio.PossibleChannels||'').split(',').filter(Boolean);return`<section class="card radio-card"><div class="card-head"><div><h3>${esc(radio.OperatingFrequencyBand||`Radio ${radio.id}`)}</h3><p class="muted">Wi-Fi ${esc(radio.OperatingStandards||'–')}</p></div>${status(bool(radio.Enable??'1')?'Aktiv':'Aus',bool(radio.Enable??'1')?'good':'')}</div><div class="quality-grid compact">${metric('Kanal',radio.Channel||'–')}${metric('Kanalautomatik',bool(radio.AutoChannelEnable)?'An':'Aus')}${metric('Sendeleistung',radio.TransmitPower||'–','%')}${metric('Kanalauslastung',radio.ChannelUtilization??'–','%')}</div>${channels.length?`<div class="channel-band"><small>Verfügbare Kanäle</small><div>${channels.map(channel=>`<span class="${String(channel)===String(radio.Channel)?'active':''}">${esc(channel)}</span>`).join('')}</div></div>`:''}</section>`}).join('')}</div><section class="card"><div class="card-head"><div><h2>Funknetze und Sicherheit</h2><p class="muted">${ssids.length} SSID-Instanzen</p></div></div><div class="table-scroll"><table><thead><tr><th>SSID</th><th>Status</th><th>Band</th><th>Verschlüsselung</th><th>BSSID</th></tr></thead><tbody>${ssids.map(ssid=>{const ap=security(ssid);return`<tr><td><strong>${esc(ssid.SSID||'–')}</strong></td><td>${status(bool(ssid.Enable)?'Aktiv':'Aus',bool(ssid.Enable)?'good':'')}</td><td>${esc(String(ssid.LowerLayers||'').replace('Device.WiFi.Radio.','Radio '))}</td><td>${status(ap['Security.ModeEnabled']||'nicht gemeldet',String(ap['Security.ModeEnabled']||'').includes('WPA3')?'good':'warn')}</td><td class="mono">${esc(ssid.BSSID||'–')}</td></tr>`}).join('')}</tbody></table></div></section>`
 };
 
-function topologyMedium(host,link){const values=[...(link?.media||[]),host.Layer1Interface||''].join(' ');if(/802\.11|wifi/i.test(values))return'WLAN';if(/1901|powerline|plc/i.test(values))return'Powerline';return'LAN'}
+function topologyMedium(host,link){
+  // Hosts.Host.InterfaceType is the most reliable initial medium marker on
+  // current FRITZ!OS builds. IEEE-1905 link data may arrive later, so it
+  // must not be the sole source for the topology grouping.
+  const values=[...(link?.media||[]),host.Layer1Interface||'',host.InterfaceType||'',host.X_AVM_DE_Interface||''].join(' ');
+  if(link?.wifi||/802\.11|wifi|wlan/i.test(values))return'WLAN';
+  if(/1901|powerline|plc/i.test(values))return'Powerline';
+  return'LAN'
+}
 function topologyDevices(){return instances('Device.IEEE1905.AL.NetworkTopology.IEEE1905Device.')}
 function topologyDeviceId(reference){return String(reference||'').match(/IEEE1905Device\.(\d+)/)?.[1]||''}
 function topologyInterface(device){const entries=Object.entries(device),media=entries.find(([key])=>key.endsWith('.MediaType'))?.[1]||'',name=entries.find(([key])=>key.endsWith('.X_AVM-DE_Name'))?.[1]||'',ssid=entries.find(([key])=>key.endsWith('.X_AVM-DE_SSID'))?.[1]||'';return{media,name,ssid}}
