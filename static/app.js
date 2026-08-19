@@ -589,3 +589,77 @@ async function loadCpuAnalysis(){
 }
 const renderSystemWithCpuAnalysis=renderSystem;
 renderSystem=function(panel){renderSystemWithCpuAnalysis(panel);addCpuAnalysis(panel)};
+
+// Home-network correlation -------------------------------------------------
+// FRITZ!OS may populate Hosts.Host before its IEEE-1905 relationship arrives.
+// Wi-Fi AssociatedDevice MAC addresses are already present at that point, so
+// use them as a first-class source for the initial medium classification.
+const associatedClientBase=associatedClient;
+function normalizedMac(value){return String(value||'').toLowerCase().replace(/[^0-9a-f]/g,'')}
+function wifiAssociatedMacs(){
+  const macs=new Set();
+  for(const item of state.agent?.parameters||[]){
+    if(!/^Device\.WiFi\.AccessPoint\.\d+\.AssociatedDevice\.\d+\.(MACAddress|MAC)$/i.test(item.path))continue;
+    const mac=normalizedMac(item.value);if(mac)macs.add(mac)
+  }
+  return macs
+}
+function isWifiHost(host,link){
+  const layer=[host.Layer1Interface,host.AssociatedDevice,host.InterfaceType,host.X_AVM_DE_Interface].filter(Boolean).join(' ');
+  if(/Device\.WiFi|802\.11|\bwifi\b|\bwlan\b/i.test(layer))return true;
+  return wifiAssociatedMacs().has(normalizedMac(host.PhysAddress))||Boolean(link?.wifi)
+}
+associatedClient=function(host){
+  const link=associatedClientBase(host);
+  if(isWifiHost(host,link)){
+    link.wifi=true;
+    if(!link.media.some(value=>/802\.11|wifi|wlan/i.test(String(value))))link.media.push('IEEE 802.11');
+  }
+  return link
+};
+
+function meshIdentity(device){
+  const values=Object.entries(device||{});
+  const value=ending=>values.find(([key])=>key.endsWith(ending))?.[1]||'';
+  const mac=normalizedMac(value('IEEE1905Id')||value('ALMACAddress')||value('MACAddress'));
+  if(mac)return`mac:${mac}`;
+  const model=String(device?.ManufacturerModel||'').trim().toLowerCase();
+  const name=String(device?.FriendlyName||'').trim().toLowerCase();
+  return model||name?`device:${model}|${name}`:`instance:${device?.id||''}`
+}
+function uniqueMeshDevices(devices){
+  const result=[],seen=new Map();
+  for(const device of devices){
+    const key=meshIdentity(device),known=seen.get(key);
+    if(!known){seen.set(key,device);result.push(device);continue}
+    // Keep all values from duplicate reports.  The current instance usually
+    // carries fresher metrics, while missing identity fields are retained.
+    Object.assign(known,Object.fromEntries(Object.entries(device).filter(([,value])=>value!==''&&value!=null)));
+  }
+  return result
+}
+meshTopology=function(){
+  const devices=uniqueMeshDevices(topologyDevices()),model=pv('Device.DeviceInfo.ModelName','FRITZ!Box'),root=devices.find(device=>device.ManufacturerModel===model)||devices.find(device=>String(device.FriendlyName).toLowerCase()==='fritz.box')||devices.find(device=>device.id==='1')||{id:'root',FriendlyName:'fritz.box',ManufacturerModel:model};
+  const infrastructure=uniqueMeshDevices(devices.filter(device=>device.id!==root.id&&String(device.ManufacturerModel||'').trim())).map(device=>({...device,connection:topologyInterface(device),metric:topologyMetric(device)}));
+  const infrastructureIds=new Set(infrastructure.map(device=>String(device.id))),infrastructureKeys=new Set(infrastructure.map(meshIdentity)),clients=[];
+  const rootIds=new Set([String(root.id||''),String(root.IEEE1905Id||'').toLowerCase(),String(root.InterfaceId||'').toLowerCase()].filter(Boolean));
+  for(const host of instances('Device.Hosts.Host.').filter(host=>bool(host.Active))){
+    const deviceId=topologyDeviceId(host.AssociatedDevice),hostName=String(host.HostName||host.Alias||'').trim().toLowerCase(),hostMac=String(host.PhysAddress||'').toLowerCase(),device=devices.find(item=>String(item.id)===deviceId),link=associatedClient(host);
+    if(hostName==='fritz.box'||deviceId===String(root.id)||rootIds.has(hostMac)||infrastructureIds.has(deviceId)||(device&&infrastructureKeys.has(meshIdentity(device))))continue;
+    const medium=topologyMedium(host,link),connection=device?topologyInterface(device):{media:host.Layer1Interface||'',name:'',ssid:''},metric=device?topologyMetric(device):{};
+    clients.push({host,device,link,medium,connection,metric,confirmed:Boolean(deviceId&&device)})
+  }
+  return{root,infrastructure,clients}
+};
+
+function openMeshComponent(deviceId){
+  const device=meshTopology().infrastructure.find(item=>String(item.id)===String(deviceId));if(!device)return;
+  const stats=device.metric||{},connection=device.connection||{},dialog=$('#model-dialog');
+  dialog.innerHTML=`<div class="drawer-head"><div><span class="eyebrow">Mesh-Komponente · LIVE</span><h2>${esc(device.FriendlyName||device.ManufacturerModel||'Mesh-Gerät')}</h2><p>${esc(device.ManufacturerModel||'AVM Mesh-Komponente')}</p></div><button data-close class="secondary" aria-label="Schließen">×</button></div><div class="quality-grid client-live-metrics">${metric('Mesh-Rolle',device['X_AVM-DE_MeshRole']||'–')}${metric('Geräteklasse',device['X_AVM-DE_DeviceClass']||'–')}${metric('FRITZ!OS',device['X_AVM-DE_SoftwareVersion']||'–')}${metric('Verbindung',connection.ssid||connection.name||connection.media||'–')}${metric('MAC-Kapazität ↓',stats.capacityRx==null?'–':bitrate(stats.capacityRx,'mbit'))}${metric('MAC-Kapazität ↑',stats.capacityTx==null?'–':bitrate(stats.capacityTx,'mbit'))}${metric('Link verfügbar',stats.availability??'–','%')}${metric('Signal',stats.rcpi??stats.rssi??'–',stats.rcpi!=null?' RCPI':' dBm')}${metric('Kanalauslastung',stats.channelUtilization??'–','%')}${metric('Latenz',stats.latency??'–','µs')}</div><section class="drawer-section"><h3>Verbindung und Topologie</h3><dl class="detail-list"><div><dt>Medium</dt><dd>${esc(connection.media||'nicht gemeldet')}</dd></div><div><dt>Schnittstelle / SSID</dt><dd>${esc([connection.name,connection.ssid].filter(Boolean).join(' · ')||'nicht gemeldet')}</dd></div><div><dt>LLDP-Erkennung</dt><dd>${esc(stats.learnedViaLldp||'nicht gemeldet')}</dd></div><div><dt>Topologie aktualisiert</dt><dd>${stats.lastUpdate?fmt(stats.lastUpdate):'nicht gemeldet'}</dd></div></dl></section>`;
+  dialog.showModal();dialog.querySelector('[data-close]').onclick=()=>dialog.close()
+}
+bindMesh=function(){
+  $$('[data-mesh-filter]').forEach(button=>button.onclick=()=>{const filter=button.dataset.meshFilter;$$('[data-mesh-filter]').forEach(item=>item.classList.toggle('active',item===button));$$('[data-mesh-group]').forEach(group=>group.classList.toggle('hidden',filter!=='all'&&group.dataset.meshGroup!==filter))});
+  $$('[data-mesh-client-id]').forEach(button=>button.onclick=()=>openClient(button.dataset.meshClientId));
+  $$('[data-mesh-device-id]').forEach(button=>button.onclick=()=>openMeshComponent(button.dataset.meshDeviceId))
+};

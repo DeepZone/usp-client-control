@@ -251,8 +251,21 @@ def live_paths_for_agent(endpoint):
             "SELECT 1 FROM parameters WHERE endpoint_id=? AND path LIKE 'Device.Optical.%' AND value<>'' LIMIT 1",
             (endpoint,),
         ).fetchone()
+        # A Host instance does not reliably identify its medium on every
+        # FRITZ!OS build.  The associated Wi-Fi device table does, however,
+        # contain the MAC address immediately.  Fetch these instances with
+        # the regular live profile so the first Heimnetz rendering already
+        # classifies WLAN clients correctly instead of waiting for a click.
+        access_points = sorted({match.group(1) for row in connection.execute(
+            "SELECT path FROM parameters WHERE endpoint_id=? "
+            "AND path LIKE 'Device.WiFi.AccessPoint.%'", (endpoint,)
+        ).fetchall() if (match := re.match(r"^Device\\.WiFi\\.AccessPoint\\.(\\d+)\\.", row["path"]))})
     if fiber and "Device.XPON." not in paths:
         paths.append("Device.XPON.")
+    for access_point in access_points:
+        path = f"Device.WiFi.AccessPoint.{access_point}.AssociatedDevice."
+        if path not in paths:
+            paths.append(path)
     return paths
 
 

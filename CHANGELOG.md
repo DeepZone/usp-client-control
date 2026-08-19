@@ -4,6 +4,14 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.13] – 2026-08-19
+
+### Behoben
+
+- aktive WLAN-Clients werden bereits bei der ersten Heimnetzansicht über ihre gemeldete WLAN-MAC-Zuordnung erkannt und nicht zunächst fälschlich als LAN dargestellt
+- mehrfach gemeldete IEEE-1905-Einträge derselben Mesh-Komponente werden konsolidiert
+- Mesh-Komponenten ohne zugehörigen Host-Eintrag öffnen nun eine vollständige, mittige Detailansicht mit Modell, FRITZ!OS, Rolle und Verbindungswerten
+
 ## [1.2.12] – 2026-08-14
 
 ### Behoben
