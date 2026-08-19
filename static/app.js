@@ -646,6 +646,24 @@ function uniqueMeshDevices(devices){
   }
   return result
 }
+function mediumConfidence(medium){return medium==='WLAN'?3:medium==='Powerline'?2:medium==='LAN'?1:0}
+function mergeTopologyClients(entries){
+  const merged=new Map();
+  for(const entry of entries){
+    const mac=normalizedMac(entry.host.PhysAddress);
+    // Never merge unknown/zero MACs: they do not identify a physical device.
+    const key=mac&&mac!=='000000000000'?`mac:${mac}`:`instance:${entry.host.id}`;
+    const current=merged.get(key);
+    if(!current){merged.set(key,entry);continue}
+    const currentScore=mediumConfidence(current.medium),nextScore=mediumConfidence(entry.medium);
+    // A Wi-Fi classification is authoritative over a concurrently reported
+    // generic/Other host.  Otherwise retain the entry with more topology data.
+    const currentFacts=(current.confirmed?4:0)+(current.link?.rows?.length||0)+(current.device?2:0);
+    const nextFacts=(entry.confirmed?4:0)+(entry.link?.rows?.length||0)+(entry.device?2:0);
+    if(nextScore>currentScore||(nextScore===currentScore&&nextFacts>currentFacts))merged.set(key,entry)
+  }
+  return [...merged.values()]
+}
 meshTopology=function(){
   const devices=uniqueMeshDevices(topologyDevices()),model=pv('Device.DeviceInfo.ModelName','FRITZ!Box'),root=devices.find(device=>device.ManufacturerModel===model)||devices.find(device=>String(device.FriendlyName).toLowerCase()==='fritz.box')||devices.find(device=>device.id==='1')||{id:'root',FriendlyName:'fritz.box',ManufacturerModel:model};
   const infrastructure=uniqueMeshDevices(devices.filter(device=>device.id!==root.id&&String(device.ManufacturerModel||'').trim())).map(device=>({...device,connection:topologyInterface(device),metric:topologyMetric(device)}));
@@ -657,7 +675,7 @@ meshTopology=function(){
     const medium=topologyMedium(host,link),connection=device?topologyInterface(device):{media:host.Layer1Interface||'',name:'',ssid:''},metric=device?topologyMetric(device):{};
     clients.push({host,device,link,medium,connection,metric,confirmed:Boolean(deviceId&&device)})
   }
-  return{root,infrastructure,clients}
+  return{root,infrastructure,clients:mergeTopologyClients(clients)}
 };
 
 function openMeshComponent(deviceId){

@@ -4,6 +4,13 @@ Alle wesentlichen Änderungen an USP Control werden in dieser Datei dokumentiert
 
 ## [Unreleased]
 
+## [1.2.15] – 2026-08-19
+
+### Behoben
+
+- aktive Host-Duplikate werden vor der Anzeige anhand ihrer MAC-Adresse zu einem Gerät konsolidiert
+- bei widersprüchlichen FRITZ!OS-Hostmeldungen erhält die eindeutig gemeldete WLAN-Verbindung Vorrang vor „Other“ oder LAN
+
 ## [1.2.14] – 2026-08-19
 
 ### Behoben
